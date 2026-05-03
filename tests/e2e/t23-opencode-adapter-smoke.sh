@@ -1,5 +1,5 @@
 #!/bin/bash
-# t23 — OpenCode adapter launcher + plugin smoke test.
+# t23 — OpenCode adapter plugin smoke test.
 set -u
 SELF="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SELF/../.." && pwd)"
@@ -10,127 +10,191 @@ fixture_init
 trap fixture_cleanup EXIT
 
 REPO=$(fixture_repo "t23")
-FAKE_BIN="$FIXTURE_ROOT/fake-bin"
-mkdir -p "$FAKE_BIN"
-cat > "$FAKE_BIN/opencode" <<'SH'
-#!/bin/bash
-printf '%s' "$PWD" > "$OPENCODE_FAKE_CWD"
-printf '%s' "${OPENCODE_CONFIG_DIR:-}" > "$OPENCODE_FAKE_CONFIG_DIR"
-printf '%s' "$OPENCODE_SANDBOX_WORKTREE" > "$OPENCODE_FAKE_WORKTREE"
-if [ "${OPENCODE_FAKE_WRITE_PENDING:-0}" = "1" ]; then
-  printf 'pending\n' > "$OPENCODE_SANDBOX_WORKTREE/pending.txt"
-fi
-exit "${OPENCODE_FAKE_EXIT:-0}"
-SH
-chmod +x "$FAKE_BIN/opencode"
 
-echo "== launcher runs fake OpenCode inside source-tree sandbox and reaps empty worktree =="
-SESSION_EMPTY="t23-empty"
-FAKE_CWD="$FIXTURE_ROOT/cwd-empty.txt"
-FAKE_CONFIG="$FIXTURE_ROOT/config-empty.txt"
-FAKE_WORKTREE="$FIXTURE_ROOT/worktree-empty.txt"
-OUT=$(PATH="$FAKE_BIN:$PATH" \
-  OPENCODE_FAKE_CWD="$FAKE_CWD" \
-  OPENCODE_FAKE_CONFIG_DIR="$FAKE_CONFIG" \
-  OPENCODE_FAKE_WORKTREE="$FAKE_WORKTREE" \
-  bash "$ROOT/adapters/opencode/bin/opencode-sandbox.sh" \
-    --repo "$REPO" --session "$SESSION_EMPTY" -- run "hello" 2>&1)
-ec=$?
-assert_exit "launcher exits with opencode status" 0 "$ec"
-assert_contains "launcher prints sandbox banner" "OpenCode sandbox" "$OUT"
-assert_file_exists "fake opencode recorded cwd" "$FAKE_CWD"
-assert_contains "cwd is source-tree sandbox" ".sandbox/worktrees/wt-$SESSION_EMPTY" "$(cat "$FAKE_CWD")"
-assert_contains "config dir points at adapter" "adapters/opencode" "$(cat "$FAKE_CONFIG")"
-assert_contains "worktree env is sandbox" ".sandbox/worktrees/wt-$SESSION_EMPTY" "$(cat "$FAKE_WORKTREE")"
-assert_dir_absent "empty launcher sandbox reaped" "$REPO/.sandbox/worktrees/wt-$SESSION_EMPTY"
-assert_file_absent "empty launcher marker reaped" "$REPO/.git/sandbox-markers/$SESSION_EMPTY"
-
-echo "== launcher capture-commits pending work and preserves unmerged sandbox =="
-SESSION_DIRTY="t23-dirty"
-FAKE_CWD_DIRTY="$FIXTURE_ROOT/cwd-dirty.txt"
-OUT=$(PATH="$FAKE_BIN:$PATH" \
-  OPENCODE_FAKE_CWD="$FAKE_CWD_DIRTY" \
-  OPENCODE_FAKE_CONFIG_DIR="$FIXTURE_ROOT/config-dirty.txt" \
-  OPENCODE_FAKE_WORKTREE="$FIXTURE_ROOT/worktree-dirty.txt" \
-  OPENCODE_FAKE_WRITE_PENDING=1 \
-  bash "$ROOT/adapters/opencode/bin/opencode-sandbox.sh" \
-    --repo "$REPO" --session "$SESSION_DIRTY" 2>&1)
-ec=$?
-assert_exit "dirty launcher exits 0" 0 "$ec"
-SB_DIRTY="$REPO/.sandbox/worktrees/wt-$SESSION_DIRTY"
-assert_dir_exists "dirty sandbox preserved" "$SB_DIRTY"
-assert_file_exists "dirty marker preserved" "$REPO/.git/sandbox-markers/$SESSION_DIRTY"
-assert_file_exists "pending file exists in sandbox" "$SB_DIRTY/pending.txt"
-LAST_SUBJ=$(git -C "$SB_DIRTY" log -1 --format=%s)
-assert_contains "pending work capture-committed" "capture pending work" "$LAST_SUBJ"
-assert_file_absent "main remains untouched" "$REPO/pending.txt"
-
-echo "== plugin guards write-capable tools against main repo targets =="
+echo "== plugin auto-creates session sandbox and guards tools =="
 if command -v node >/dev/null 2>&1; then
-  NODE_SCRIPT="$FIXTURE_ROOT/opencode-plugin-smoke.mjs"
-  cat > "$NODE_SCRIPT" <<'JS'
+  NODE_ASYNC_SCRIPT="$FIXTURE_ROOT/opencode-plugin-async-smoke.mjs"
+  cat > "$NODE_ASYNC_SCRIPT" <<'JS'
+import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 
-const [pluginPath, repo, sandbox, session, root] = process.argv.slice(2)
-process.env.OPENCODE_SANDBOX_ACTIVE = "1"
-process.env.OPENCODE_SANDBOX_SESSION = session
-process.env.OPENCODE_SANDBOX_REPO = repo
-process.env.OPENCODE_SANDBOX_ROOT = root
-process.env.OPENCODE_SANDBOX_WORKTREE = sandbox
-process.env.OPENCODE_SANDBOX_WORKTREES_DIR = ".sandbox/worktrees"
-process.env.OPENCODE_SANDBOX_BRANCH_PREFIX = "wt"
+const [pluginPath, repo, fakeRoot] = process.argv.slice(2)
+const sessionID = "oc-asyncboot"
+const sandbox = path.join(repo, ".sandbox", "worktrees", `wt-${sessionID}`)
+const marker = path.join(repo, ".git", "sandbox-markers", sessionID)
+
+function posix(value) {
+  return String(value || "").replace(/\\/g, "/")
+}
+
+function writeExecutable(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, text)
+  fs.chmodSync(file, 0o755)
+}
+
+writeExecutable(
+  path.join(fakeRoot, "core", "cmd", "sandbox-init.sh"),
+  `#!/bin/bash
+set -u
+REPO=""; SESSION=""; WT_DIR=".sandbox/worktrees"; BR_PREFIX="wt"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="$2"; shift 2 ;;
+    --session) SESSION="$2"; shift 2 ;;
+    --worktrees-dir) WT_DIR="$2"; shift 2 ;;
+    --branch-prefix) BR_PREFIX="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf 'init\n' >> "$REPO/.git/sandbox-init-count"
+sleep 1
+BRANCH="$BR_PREFIX-$SESSION"
+WT_PATH="$REPO/$WT_DIR/$BRANCH"
+MARKER="$REPO/.git/sandbox-markers/$SESSION"
+mkdir -p "$WT_PATH" "$(dirname "$MARKER")"
+HEAD=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true)
+printf '%s %s %s' "$BRANCH" "$(date +%s)" "$HEAD" > "$MARKER"
+printf '%s\n' "$WT_PATH"
+`,
+)
+writeExecutable(path.join(fakeRoot, "core", "cmd", "sandbox-lifecycle.sh"), "#!/bin/bash\nexit 0\n")
+writeExecutable(
+  path.join(fakeRoot, "core", "cmd", "sandbox-cleanup.sh"),
+  `#!/bin/bash
+set -u
+REPO=""; SESSION=""; WT_DIR=".sandbox/worktrees"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="$2"; shift 2 ;;
+    --session) SESSION="$2"; shift 2 ;;
+    --worktrees-dir) WT_DIR="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+rm -rf "$REPO/$WT_DIR/wt-$SESSION"
+rm -f "$REPO/.git/sandbox-markers/$SESSION" "$REPO/.git/sandbox-markers/$SESSION.hb"
+`,
+)
+writeExecutable(path.join(fakeRoot, "core", "cmd", "sandbox-guard.sh"), "#!/bin/bash\nexit 0\n")
+writeExecutable(path.join(fakeRoot, "core", "lib", "heartbeat.sh"), "#!/bin/bash\nexit 0\n")
+
+for (const key of [
+  "OPENCODE_SANDBOX_ACTIVE",
+  "OPENCODE_SANDBOX_SOURCE",
+  "OPENCODE_SANDBOX_SESSION",
+  "OPENCODE_SANDBOX_REPO",
+  "OPENCODE_SANDBOX_WORKTREE",
+  "OPENCODE_SANDBOX_WORKTREES_DIR",
+  "OPENCODE_SANDBOX_BRANCH_PREFIX",
+]) {
+  delete process.env[key]
+}
+process.env.OPENCODE_SANDBOX_ROOT = fakeRoot
 
 const mod = await import(pathToFileURL(pluginPath).href)
-const hooks = await mod.WorktreeSandbox({ directory: sandbox, worktree: sandbox })
+const hooks = await mod.WorktreeSandbox({ directory: repo, worktree: repo })
 
-await hooks["tool.execute.before"](
-  { tool: "write", sessionID: session, callID: "allow" },
-  { args: { filePath: path.join(sandbox, "allowed.txt") } },
-)
-
-let deniedWrite = false
-try {
-  await hooks["tool.execute.before"](
-    { tool: "write", sessionID: session, callID: "deny" },
-    { args: { filePath: path.join(repo, "README.md") } },
-  )
-} catch (error) {
-  deniedWrite = String(error.message).includes("sandbox-guard")
-}
-if (!deniedWrite) throw new Error("write to main repo was not denied")
-
-await hooks["tool.execute.before"](
-  { tool: "bash", sessionID: session, callID: "bash-allow" },
-  { args: { command: "git status", workdir: sandbox } },
-)
-
-let deniedBash = false
-try {
-  await hooks["tool.execute.before"](
-    { tool: "bash", sessionID: session, callID: "bash-deny" },
-    { args: { command: "touch README.md", workdir: repo } },
-  )
-} catch (error) {
-  deniedBash = String(error.message).includes("sandbox-guard")
-}
-if (!deniedBash) throw new Error("bash from main repo was not denied")
+let started = Date.now()
+await hooks.event({ event: { type: "session.created", properties: { sessionID } } })
+if (Date.now() - started > 300) throw new Error("session.created blocked on sandbox init")
 
 const system = { system: [] }
-await hooks["experimental.chat.system.transform"]({ sessionID: session }, system)
-if (!system.system.join("\n").includes(sandbox)) throw new Error("system context missing sandbox")
+started = Date.now()
+await hooks["experimental.chat.system.transform"]({ sessionID, model: {} }, system)
+if (Date.now() - started > 300) throw new Error("system transform blocked on sandbox init")
+if (!system.system.join("\n").includes("preparing a sandbox")) throw new Error("pending system context missing")
+if (fs.existsSync(sandbox)) throw new Error("sandbox was created before the async barrier")
+
+const write = { args: { filePath: "created.txt" } }
+const secondWrite = { args: { filePath: "second.txt" } }
+started = Date.now()
+await Promise.all([
+  hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "async-write" }, write),
+  hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "async-write-2" }, secondWrite),
+])
+const waited = Date.now() - started
+if (waited < 800) throw new Error(`tool did not wait for pending sandbox init: ${waited}ms`)
+if (posix(write.args.filePath) !== posix(path.join(sandbox, "created.txt"))) {
+  throw new Error(`write target was not mapped into async sandbox: ${write.args.filePath}`)
+}
+if (posix(secondWrite.args.filePath) !== posix(path.join(sandbox, "second.txt"))) {
+  throw new Error(`second write target was not mapped into async sandbox: ${secondWrite.args.filePath}`)
+}
+const initCount = fs.readFileSync(path.join(repo, ".git", "sandbox-init-count"), "utf8").trim().split(/\n/).filter(Boolean).length
+if (initCount !== 1) throw new Error(`async bootstrap was not single-flight: ${initCount}`)
+if (!fs.existsSync(marker)) throw new Error("async sandbox marker missing after tool wait")
 
 const shell = { env: {} }
-await hooks["shell.env"]({ cwd: sandbox, sessionID: session }, shell)
-if (shell.env.OPENCODE_SANDBOX_SESSION !== session) throw new Error("shell env missing session")
-JS
-  OUT=$(node "$NODE_SCRIPT" \
-    "$ROOT/adapters/opencode/plugins/worktree-sandbox.js" \
-    "$REPO" "$SB_DIRTY" "$SESSION_DIRTY" "$ROOT" 2>&1)
-  ec=$?
-  assert_exit "plugin smoke exits 0" 0 "$ec"
+await hooks["shell.env"]({ sessionID, cwd: repo }, shell)
+if (posix(shell.env.OPENCODE_SANDBOX_WORKTREE) !== posix(sandbox)) throw new Error("shell env missing async sandbox")
 
-  echo "== plugin auto-creates session sandbox without launcher =="
+await hooks.event({ event: { type: "session.deleted", properties: { sessionID } } })
+if (fs.existsSync(sandbox)) throw new Error("async sandbox was not cleaned up")
+if (fs.existsSync(marker)) throw new Error("async marker was not cleaned up")
+
+const cancelSessionID = "oc-cancelboot"
+const cancelSandbox = path.join(repo, ".sandbox", "worktrees", `wt-${cancelSessionID}`)
+const cancelMarker = path.join(repo, ".git", "sandbox-markers", cancelSessionID)
+await hooks.event({ event: { type: "session.created", properties: { sessionID: cancelSessionID } } })
+await hooks.event({ event: { type: "session.deleted", properties: { sessionID: cancelSessionID } } })
+await new Promise((resolve) => setTimeout(resolve, 1500))
+if (fs.existsSync(cancelSandbox)) throw new Error("cancelled pending sandbox leaked after late init")
+if (fs.existsSync(cancelMarker)) throw new Error("cancelled pending marker leaked after late init")
+JS
+  OUT=$(node "$NODE_ASYNC_SCRIPT" "$ROOT/adapters/opencode/plugins/worktree-sandbox.js" "$REPO" "$FIXTURE_ROOT/fake-opencode-core" 2>&1)
+  ec=$?
+  assert_exit "plugin async bootstrap smoke exits 0" 0 "$ec"
+
+  NODE_FAIL_SCRIPT="$FIXTURE_ROOT/opencode-plugin-bootstrap-fail.mjs"
+  cat > "$NODE_FAIL_SCRIPT" <<'JS'
+import fs from "node:fs"
+import path from "node:path"
+import { pathToFileURL } from "node:url"
+
+const [pluginPath, repo, fakeRoot] = process.argv.slice(2)
+const sessionID = "oc-initfail"
+
+function writeExecutable(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, text)
+  fs.chmodSync(file, 0o755)
+}
+
+writeExecutable(path.join(fakeRoot, "core", "cmd", "sandbox-init.sh"), "#!/bin/bash\nprintf 'init exploded' >&2\nexit 1\n")
+writeExecutable(path.join(fakeRoot, "core", "cmd", "sandbox-lifecycle.sh"), "#!/bin/bash\nexit 0\n")
+writeExecutable(path.join(fakeRoot, "core", "cmd", "sandbox-cleanup.sh"), "#!/bin/bash\nexit 0\n")
+writeExecutable(path.join(fakeRoot, "core", "cmd", "sandbox-guard.sh"), "#!/bin/bash\nexit 0\n")
+writeExecutable(path.join(fakeRoot, "core", "lib", "heartbeat.sh"), "#!/bin/bash\nexit 0\n")
+
+for (const key of [
+  "OPENCODE_SANDBOX_ACTIVE",
+  "OPENCODE_SANDBOX_SOURCE",
+  "OPENCODE_SANDBOX_SESSION",
+  "OPENCODE_SANDBOX_REPO",
+  "OPENCODE_SANDBOX_WORKTREE",
+  "OPENCODE_SANDBOX_WORKTREES_DIR",
+  "OPENCODE_SANDBOX_BRANCH_PREFIX",
+]) {
+  delete process.env[key]
+}
+process.env.OPENCODE_SANDBOX_ROOT = fakeRoot
+
+const mod = await import(pathToFileURL(pluginPath).href)
+const hooks = await mod.WorktreeSandbox({ directory: repo, worktree: repo })
+let denied = false
+try {
+  await hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "fail-write" }, { args: { filePath: "should-not-write.txt" } })
+} catch (error) {
+  denied = String(error.message).includes("init exploded")
+}
+if (!denied) throw new Error("write-capable tool did not fail closed after sandbox init failure")
+JS
+  OUT=$(node "$NODE_FAIL_SCRIPT" "$ROOT/adapters/opencode/plugins/worktree-sandbox.js" "$REPO" "$FIXTURE_ROOT/fake-opencode-fail-core" 2>&1)
+  ec=$?
+  assert_exit "plugin bootstrap failure fails closed" 0 "$ec"
+
   NODE_AUTO_SCRIPT="$FIXTURE_ROOT/opencode-plugin-auto-smoke.mjs"
   cat > "$NODE_AUTO_SCRIPT" <<'JS'
 import fs from "node:fs"
@@ -164,6 +228,16 @@ const mod = await import(pathToFileURL(pluginPath).href)
 const hooks = await mod.WorktreeSandbox({ directory: repo, worktree: repo })
 
 await hooks.event({ event: { type: "session.created", properties: { sessionID } } })
+
+const definition = { description: "Run commands" }
+await hooks["tool.definition"]({ toolID: "bash" }, definition)
+if (!definition.description.includes("worktree-sandbox is active")) throw new Error("tool definition missing sandbox note")
+
+const relativeWrite = { args: { filePath: "created.txt" } }
+await hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "relative-write" }, relativeWrite)
+if (posix(relativeWrite.args.filePath) !== posix(path.join(sandbox, "created.txt"))) {
+  throw new Error(`relative write was not mapped into sandbox: ${relativeWrite.args.filePath}`)
+}
 if (!fs.existsSync(sandbox)) throw new Error(`sandbox missing: ${sandbox}`)
 if (!fs.existsSync(marker)) throw new Error(`marker missing: ${marker}`)
 
@@ -175,16 +249,6 @@ const shell = { env: {} }
 await hooks["shell.env"]({ sessionID, cwd: repo }, shell)
 if (shell.env.OPENCODE_SANDBOX_SESSION !== compactSessionID) throw new Error("shell env uses long sandbox session")
 if (posix(shell.env.OPENCODE_SANDBOX_WORKTREE) !== posix(sandbox)) throw new Error("shell env missing sandbox")
-
-const definition = { description: "Run commands" }
-await hooks["tool.definition"]({ toolID: "bash" }, definition)
-if (!definition.description.includes("worktree-sandbox is active")) throw new Error("tool definition missing sandbox note")
-
-const relativeWrite = { args: { filePath: "created.txt" } }
-await hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "relative-write" }, relativeWrite)
-if (posix(relativeWrite.args.filePath) !== posix(path.join(sandbox, "created.txt"))) {
-  throw new Error(`relative write was not mapped into sandbox: ${relativeWrite.args.filePath}`)
-}
 
 let deniedWrite = false
 try {
@@ -232,6 +296,7 @@ if (fs.existsSync(marker)) throw new Error("empty auto marker was not cleaned up
 JS
   OUT=$(node "$NODE_AUTO_SCRIPT" "$ROOT/adapters/opencode/plugins/worktree-sandbox.js" "$REPO" 2>&1)
   ec=$?
+  [ "$ec" -eq 0 ] || printf '  GOT: %s\n' "$OUT" >&2
   assert_exit "plugin auto sandbox smoke exits 0" 0 "$ec"
   assert_not_contains "plugin auto sandbox does not write TUI-noisy stderr" "\[sandbox\]" "$OUT"
 
@@ -429,21 +494,21 @@ const parentPluginURL = pathToFileURL(parentPluginPath).href
 if (core.tuiPluginID(sandboxPluginURL) === core.tuiPluginID(parentPluginURL)) {
   throw new Error("TUI plugin ids should be path-scoped")
 }
-const launcherEnv = {
+const sandboxEnv = {
   OPENCODE_SANDBOX_ACTIVE: "1",
   OPENCODE_SANDBOX_WORKTREE: worktree,
 }
-if (!core.shouldRunTuiPlugin(sandboxPluginURL, { directory: worktree, env: launcherEnv })) {
-  throw new Error("sandbox-local TUI plugin should run in launcher worktree")
+if (!core.shouldRunTuiPlugin(sandboxPluginURL, { directory: worktree, env: sandboxEnv })) {
+  throw new Error("sandbox-local TUI plugin should run in sandbox worktree")
 }
-if (core.shouldRunTuiPlugin(parentPluginURL, { directory: worktree, env: launcherEnv })) {
+if (core.shouldRunTuiPlugin(parentPluginURL, { directory: worktree, env: sandboxEnv })) {
   throw new Error("parent TUI plugin should no-op when sandbox copy is loaded")
 }
-if (!core.shouldRunTuiPlugin(parentPluginURL, { directory: path.dirname(worktree), env: launcherEnv })) {
-  throw new Error("parent TUI plugin should still run outside launcher worktree")
+if (!core.shouldRunTuiPlugin(parentPluginURL, { directory: path.dirname(worktree), env: sandboxEnv })) {
+  throw new Error("parent TUI plugin should still run outside sandbox worktree")
 }
 fs.rmSync(path.dirname(sandboxPluginPath), { recursive: true, force: true })
-if (!core.shouldRunTuiPlugin(parentPluginURL, { directory: worktree, env: launcherEnv })) {
+if (!core.shouldRunTuiPlugin(parentPluginURL, { directory: worktree, env: sandboxEnv })) {
   throw new Error("parent TUI plugin should run when sandbox copy is absent")
 }
 

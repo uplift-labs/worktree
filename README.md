@@ -114,7 +114,7 @@ worktree-sandbox/
 ├── adapters/
 │   ├── claude-code/ ← Claude Code hook translation layer
 │   ├── codex/       ← Codex hook wrappers + launcher
-│   └── opencode/    ← OpenCode plugin + optional launcher
+│   └── opencode/    ← OpenCode project + TUI plugins
 └── install.sh
 ```
 
@@ -200,17 +200,16 @@ The OpenCode adapter (`adapters/opencode/`) is plugin-first:
 
 | Component | What it does |
 |---|---|
-| Plugin | Loads automatically from `.opencode/plugins/`, creates a sandbox on `session.created` or the first session-aware hook, injects system context, passes sandbox env vars to shell tools, maps supported built-in tools to the sandbox, blocks explicit main-repo write targets, refreshes markers, and cleans up on `session.deleted` or process exit. |
+| Plugin | Loads automatically from `.opencode/plugins/`, schedules sandbox creation on `session.created` or the first session-aware hook without blocking the first LLM request, injects system context, waits for the sandbox before supported tool execution, passes sandbox env vars to shell tools, maps supported built-in tools to the sandbox, blocks explicit main-repo write targets, refreshes markers, and cleans up on `session.deleted` or process exit. |
 | TUI plugin | Loads from `.opencode/tui.json`, adds a right-sidebar `Sandbox Modified Files` list from the real sandbox git diff, watches the worktree's real git `HEAD` for branch changes, and keeps async polling as a fallback for sandbox file changes. The branch badge is disabled by default because OpenCode already renders the current branch in its footer. |
-| `opencode-sandbox.sh` | Optional strict mode: creates the sandbox before OpenCode starts and runs `opencode` from the sandbox worktree. Useful when you need the OpenCode process cwd itself to be the sandbox. |
 
-The plugin is the normal path: after `--with-opencode`, run `opencode` as usual. OpenCode does not expose a pre-bootstrap hook that mutates its internal project root, so the plugin virtualizes supported tool paths into the sandbox and uses the launcher only as an optional stricter cwd mode. In plugin-first mode OpenCode's own footer/status may still show the original repo and branch; trust `OPENCODE_SANDBOX_WORKTREE`, tool working dirs, or `git status` run by the tool for the active sandbox state. Use the launcher when the UI/process root itself must show the sandbox worktree.
+After `--with-opencode`, run `opencode` as usual. OpenCode does not expose a pre-bootstrap hook that mutates its internal project root, so the plugin virtualizes supported tool paths into the sandbox. Sandbox creation runs asynchronously so the first prompt can move into the chat workspace promptly; the first supported tool call waits for the sandbox before touching files. OpenCode's own footer/status may still show the original repo and branch; trust `OPENCODE_SANDBOX_WORKTREE`, tool working dirs, or `git status` run by the tool for the active sandbox state.
 
 The TUI plugin resolves the session sandbox worktree from `OPENCODE_SANDBOX_WORKTREE` or the session marker, then watches the resolved worktree git `HEAD` path. `git switch` normally updates immediately through the file watcher; polling remains as a fallback for missed branch events. The sidebar file list reads committed changes on the current sandbox branch relative to its merge-base with `main`/`master`, plus staged, unstaged, and untracked files in the sandbox worktree. This keeps unrelated main-repo changes out of the sidebar, even when main has moved or been merged into the sandbox branch. File refreshes are debounced and use asynchronous git commands with a timeout so OpenCode's UI thread is not blocked after edits. Tune fallback polling with `AISB_OPENCODE_BRANCH_REFRESH_MS` (default `5000` ms while the watcher is active, `1000` ms without it), `AISB_OPENCODE_FILES_REFRESH_MS` (default `2000` ms; set `0` to disable), and `AISB_OPENCODE_GIT_TIMEOUT_MS` (default `3000`). Enable the old prompt branch badge with `AISB_OPENCODE_BRANCH_BADGE=1`, disable branch watching with `AISB_OPENCODE_BRANCH_WATCH=0`, and enable debug logs with `AISB_OPENCODE_BRANCH_DEBUG=1` or `AISB_OPENCODE_FILES_DEBUG=1`.
 
 The built-in OpenCode `Modified Files` sidebar reads OpenCode's original project root. To avoid mutating OpenCode's internal plugin state during normal UI rendering, the TUI plugin no longer deactivates `internal:sidebar-files` by default. Set `AISB_OPENCODE_HIDE_BUILTIN_FILES=1` to restore the old behavior.
 
-Optional OS-level sandboxing is available with `--with-opencode-os-sandbox`. This does not replace worktree isolation; it adds the community `opencode-sandbox` npm plugin so OpenCode `bash` tool calls are wrapped by `@anthropic-ai/sandbox-runtime`. On macOS this uses Seatbelt / `sandbox-exec`; on Linux it uses `bubblewrap` plus runtime helpers; on Windows it is unsupported and commands pass through unsandboxed. The launcher points OpenCode at the source repo `opencode.json` when that config enables `opencode-sandbox`, so the npm plugin can load even before the install changes have been committed into the newly-created worktree.
+Optional OS-level sandboxing is available with `--with-opencode-os-sandbox`. This does not replace worktree isolation; it adds the community `opencode-sandbox` npm plugin so OpenCode `bash` tool calls are wrapped by `@anthropic-ai/sandbox-runtime`. On macOS this uses Seatbelt / `sandbox-exec`; on Linux it uses `bubblewrap` plus runtime helpers; on Windows it is unsupported and commands pass through unsandboxed.
 
 ### Git hooks
 
@@ -241,7 +240,7 @@ A sandbox goes through a predictable lifecycle. Understanding it prevents subtle
 
 ### Phase C — Session end
 
-For Claude Code, `session-end.sh` runs on termination (`/exit`, Ctrl+C/D, terminal close, logout). On real exit: (1) kill heartbeat, (2) stage + commit pending work, (3) run lifecycle. On `/clear` or `/compact`: heartbeat only. For Codex CLI, `codex-sandbox.sh` performs the equivalent cleanup when the launched `codex` process exits. For OpenCode, the project plugin cleanup runs on `session.deleted` and process exit; the optional launcher performs the same cleanup when the launched `opencode` process exits.
+For Claude Code, `session-end.sh` runs on termination (`/exit`, Ctrl+C/D, terminal close, logout). On real exit: (1) kill heartbeat, (2) stage + commit pending work, (3) run lifecycle. On `/clear` or `/compact`: heartbeat only. For Codex CLI, `codex-sandbox.sh` performs the equivalent cleanup when the launched `codex` process exits. For OpenCode, the project plugin cleanup runs on `session.deleted` and process exit.
 
 **SessionEnd never merges into main.** The user merges when ready.
 

@@ -8,7 +8,7 @@
 # runs sandbox-merge-gate. With --with-claude-code, also installs the Claude
 # Code adapter hooks and a settings-hooks.json snippet. With --with-codex,
 # installs Codex lifecycle hooks and a launcher. With --with-opencode,
-# installs an OpenCode launcher and project-local plugin. With
+# installs the OpenCode project-local plugin. With
 # --with-opencode-os-sandbox, also adds the opencode-sandbox npm plugin to
 # opencode.json. JSON hook/config merges require python3 on PATH.
 
@@ -460,13 +460,11 @@ fi
 
 if [ "$WITH_OPENCODE" -eq 1 ]; then
   OPENCODE_ADAPTER_DIR="$INSTALL_ROOT/adapters/opencode"
-  mkdir -p "$OPENCODE_ADAPTER_DIR/lib" "$OPENCODE_ADAPTER_DIR/bin" "$OPENCODE_ADAPTER_DIR/plugins" "$OPENCODE_ADAPTER_DIR/tui"
+  mkdir -p "$OPENCODE_ADAPTER_DIR/plugins" "$OPENCODE_ADAPTER_DIR/tui"
+  rm -rf "$OPENCODE_ADAPTER_DIR/bin" "$OPENCODE_ADAPTER_DIR/lib"
   printf '[install] copying OpenCode adapter to %s\n' "$OPENCODE_ADAPTER_DIR"
-  sync_sh_dir "$SCRIPT_DIR/adapters/opencode/lib" "$OPENCODE_ADAPTER_DIR/lib"
-  sync_sh_dir "$SCRIPT_DIR/adapters/opencode/bin" "$OPENCODE_ADAPTER_DIR/bin"
   sync_js_dir "$SCRIPT_DIR/adapters/opencode/plugins" "$OPENCODE_ADAPTER_DIR/plugins"
   sync_js_tsx_dir "$SCRIPT_DIR/adapters/opencode/tui" "$OPENCODE_ADAPTER_DIR/tui"
-  chmod +x "$OPENCODE_ADAPTER_DIR/bin/"*.sh
 
   OPENCODE_PROJECT_PLUGIN_DIR="$TARGET/.opencode/plugins"
   mkdir -p "$OPENCODE_PROJECT_PLUGIN_DIR"

@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process"
+import { execFile, execFileSync, spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -7,6 +7,7 @@ const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 const state = {
   sessions: new Map(),
+  bootstraps: new Map(),
   warnings: new Map(),
   heartbeats: new Map(),
   cleanupRegistered: false,
@@ -17,6 +18,12 @@ const PATH_TOOLS = new Set(["read", "edit", "write", "lsp"])
 const SEARCH_TOOLS = new Set(["grep", "glob"])
 const PATCH_TOOLS = new Set(["apply_patch", "patch"])
 const SANDBOXED_TOOLS = new Set([...PATH_TOOLS, ...SEARCH_TOOLS, ...PATCH_TOOLS, "bash"])
+const DEFAULT_EXEC_MAX_BUFFER = 10 * 1024 * 1024
+const PENDING_SYSTEM_CONTEXT = [
+  "worktree-sandbox is preparing a sandbox for this session.",
+  "Use relative project paths; supported tools will be routed to the sandbox before execution.",
+  "Do not target the main repository path directly.",
+].join(" ")
 
 function envValue(name) {
   return process.env[name] || ""
@@ -85,29 +92,6 @@ function emptyConfig() {
     worktreesDir: ".sandbox/worktrees",
     branchPrefix: "wt",
     branchGlob: "wt-*",
-    auto: false,
-  }
-}
-
-function launcherConfig() {
-  if (envValue("OPENCODE_SANDBOX_SOURCE") === "opencode-plugin") return emptyConfig()
-
-  const repo = envValue("OPENCODE_SANDBOX_REPO")
-  const root = envValue("OPENCODE_SANDBOX_ROOT") || (repo ? path.join(repo, ".uplift", "sandbox") : "")
-  const session = envValue("OPENCODE_SANDBOX_SESSION")
-  const worktree = envValue("OPENCODE_SANDBOX_WORKTREE")
-  const branchPrefix = envValue("OPENCODE_SANDBOX_BRANCH_PREFIX") || "wt"
-
-  if (envValue("OPENCODE_SANDBOX_ACTIVE") !== "1" || !session || !repo || !root || !worktree) return emptyConfig()
-  return {
-    active: true,
-    session,
-    repo,
-    root,
-    worktree,
-    worktreesDir: envValue("OPENCODE_SANDBOX_WORKTREES_DIR") || ".sandbox/worktrees",
-    branchPrefix,
-    branchGlob: branchPrefix.includes("*") ? branchPrefix : `${branchPrefix}-*`,
     auto: false,
   }
 }
@@ -181,6 +165,31 @@ function branchGlob(prefix) {
 }
 
 let cachedBash = ""
+let cachedBashPromise = null
+
+function execFileAsync(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      command,
+      args,
+      {
+        encoding: "utf8",
+        maxBuffer: DEFAULT_EXEC_MAX_BUFFER,
+        windowsHide: true,
+        ...options,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          error.stdout = stdout
+          error.stderr = stderr
+          reject(error)
+          return
+        }
+        resolve(String(stdout || ""))
+      },
+    )
+  })
+}
 
 function resolveBash() {
   if (cachedBash) return cachedBash
@@ -213,11 +222,59 @@ function resolveBash() {
   throw new Error("bash command not found")
 }
 
+async function resolveBashAsync() {
+  if (cachedBash) return cachedBash
+  if (cachedBashPromise) return cachedBashPromise
+
+  cachedBashPromise = (async () => {
+    const candidates = []
+    const add = (candidate) => {
+      if (candidate && !candidates.includes(candidate)) candidates.push(candidate)
+    }
+
+    add(envValue("WORKTREE_SANDBOX_BASH"))
+    add(envValue("GIT_BASH"))
+    if (process.platform === "win32") {
+      add("C:\\Program Files\\Git\\bin\\bash.exe")
+      add("C:\\Program Files\\Git\\usr\\bin\\bash.exe")
+      add("C:\\Program Files (x86)\\Git\\bin\\bash.exe")
+    }
+    add("bash")
+
+    for (const candidate of candidates) {
+      if ((path.isAbsolute(candidate) || /^[A-Za-z]:[\\/]/.test(candidate)) && !fs.existsSync(candidate)) continue
+      try {
+        await execFileAsync(candidate, ["--version"], { timeout: 3000, maxBuffer: 1024 * 1024 })
+        cachedBash = candidate
+        return candidate
+      } catch {
+        // Try the next candidate. On Windows, bare bash can resolve to WSL.
+      }
+    }
+
+    throw new Error("bash command not found")
+  })()
+
+  try {
+    return await cachedBashPromise
+  } finally {
+    if (!cachedBash) cachedBashPromise = null
+  }
+}
+
 function execSandbox(root, rel, args, options = {}) {
   return execFileSync(resolveBash(), [path.join(root, rel), ...args], {
     cwd: options.cwd || root,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+  })
+}
+
+async function execSandboxAsync(root, rel, args, options = {}) {
+  const bash = await resolveBashAsync()
+  return execFileAsync(bash, [path.join(root, rel), ...args], {
+    cwd: options.cwd || root,
+    ...options,
   })
 }
 
@@ -334,84 +391,241 @@ function launchHeartbeat(cfg) {
   state.heartbeats.set(cfg.session, child)
 }
 
-function createSessionConfig(sessionID, baseDirectory) {
-  const session = sandboxSessionID(sessionID)
-  if (state.sessions.has(session)) return state.sessions.get(session)
+function deferBootstrap(fn) {
+  return new Promise((resolve) => {
+    const run = () => resolve()
+    if (typeof setImmediate === "function") setImmediate(run)
+    else setTimeout(run, 0)
+  }).then(fn)
+}
 
+function bootstrapDebug(session, phase, startedAt) {
+  if (envValue("AISB_OPENCODE_BOOT_DEBUG") !== "1") return
+  const elapsed = typeof startedAt === "number" ? ` elapsed_ms=${Date.now() - startedAt}` : ""
+  console.error(`worktree-sandbox bootstrap ${phase} session=${session}${elapsed}`)
+}
+
+function currentBranch(repo) {
+  try {
+    return gitOutput(["branch", "--show-current"], repo)
+  } catch {
+    return ""
+  }
+}
+
+function warningFromError(error, fallback) {
+  return (commandOutput(error?.stdout) || commandOutput(error?.stderr) || error?.message || fallback || "").trim()
+}
+
+function initArgs(ctx) {
+  return [
+    "--repo",
+    ctx.repo,
+    "--session",
+    ctx.session,
+    "--worktrees-dir",
+    ctx.worktreesDir,
+    "--branch-prefix",
+    ctx.branchPrefix,
+  ]
+}
+
+function lifecycleArgs(ctx) {
+  return [
+    "--repo",
+    ctx.repo,
+    "--worktrees-dir",
+    ctx.worktreesDir,
+    "--branch-prefix",
+    ctx.branchGlob,
+  ]
+}
+
+async function runSandboxInit(ctx) {
+  return (await execSandboxAsync(ctx.root, "core/cmd/sandbox-init.sh", initArgs(ctx))).trim()
+}
+
+async function runSandboxLifecycle(ctx) {
+  return execSandboxAsync(ctx.root, "core/cmd/sandbox-lifecycle.sh", lifecycleArgs(ctx))
+}
+
+function prepareSessionContext(sessionID, baseDirectory) {
+  const session = sandboxSessionID(sessionID)
   const repo = resolveRepo(baseDirectory)
-  if (!repo) return emptyConfig()
+  if (!repo) return { session, active: false }
+
+  const branch = currentBranch(repo)
+  if (branch !== "main" && branch !== "master") return { session, active: false }
 
   const root = findSandboxRoot(repo)
   if (!root) {
     state.warnings.set(session, "installed sandbox core not found")
-    return emptyConfig()
+    return { session, active: false }
   }
 
-  const wtDir = worktreesDir(repo, root)
   const brPrefix = branchPrefix()
-  const brGlob = branchGlob(brPrefix)
-
-  try {
-    execSandbox(root, "core/cmd/sandbox-lifecycle.sh", [
-      "--repo",
-      repo,
-      "--worktrees-dir",
-      wtDir,
-      "--branch-prefix",
-      brGlob,
-    ])
-  } catch {
-    // Lifecycle is only a cleanup pre-pass; sandbox-init below decides safety.
-  }
-
-  let worktree = ""
-  try {
-    worktree = execSandbox(root, "core/cmd/sandbox-init.sh", [
-      "--repo",
-      repo,
-      "--session",
-      session,
-      "--worktrees-dir",
-      wtDir,
-      "--branch-prefix",
-      brPrefix,
-    ]).trim()
-  } catch (error) {
-    const warning = (commandOutput(error.stdout) || commandOutput(error.stderr) || error.message).trim()
-    state.warnings.set(session, warning || "sandbox creation failed")
-    return emptyConfig()
-  }
-
-  if (!worktree) return emptyConfig()
-
-  const cfg = {
+  return {
     active: true,
     session,
     repo,
     root,
-    worktree,
-    worktreesDir: wtDir,
+    worktreesDir: worktreesDir(repo, root),
     branchPrefix: brPrefix,
-    branchGlob: brGlob,
+    branchGlob: branchGlob(brPrefix),
+  }
+}
+
+async function createSessionConfigAsync(ctx, entry) {
+  let worktree = ""
+  let firstWarning = ""
+
+  try {
+    const startedAt = Date.now()
+    worktree = await runSandboxInit(ctx)
+    bootstrapDebug(ctx.session, "init", startedAt)
+  } catch (error) {
+    firstWarning = warningFromError(error, "sandbox creation failed")
+
+    try {
+      const lifecycleStartedAt = Date.now()
+      await runSandboxLifecycle(ctx)
+      bootstrapDebug(ctx.session, "lifecycle-retry-prepass", lifecycleStartedAt)
+    } catch {
+      // Lifecycle is only a cleanup pre-pass; sandbox-init retry decides safety.
+    }
+
+    try {
+      const retryStartedAt = Date.now()
+      worktree = await runSandboxInit(ctx)
+      bootstrapDebug(ctx.session, "init-retry", retryStartedAt)
+    } catch (retryError) {
+      const warning = warningFromError(retryError, firstWarning || "sandbox creation failed")
+      entry.status = entry.cancelled ? "cancelled" : "failed"
+      entry.cfg = emptyConfig()
+      if (entry.cancelled) state.bootstraps.delete(ctx.session)
+      if (!entry.cancelled) state.warnings.set(ctx.session, warning || "sandbox creation failed")
+      return entry.cfg
+    }
+  }
+
+  if (!worktree) {
+    entry.status = entry.cancelled ? "cancelled" : "inactive"
+    entry.cfg = emptyConfig()
+    if (entry.cancelled) state.bootstraps.delete(ctx.session)
+    return entry.cfg
+  }
+
+  const cfg = {
+    active: true,
+    session: ctx.session,
+    repo: ctx.repo,
+    root: ctx.root,
+    worktree,
+    worktreesDir: ctx.worktreesDir,
+    branchPrefix: ctx.branchPrefix,
+    branchGlob: ctx.branchGlob,
     auto: true,
   }
-  state.sessions.set(session, cfg)
-  state.currentSession = session
+
+  if (entry.cancelled) {
+    cleanupConfig(cfg)
+    entry.status = "cancelled"
+    entry.cfg = emptyConfig()
+    state.bootstraps.delete(ctx.session)
+    return entry.cfg
+  }
+
+  entry.status = "ready"
+  entry.cfg = cfg
+  state.sessions.set(ctx.session, cfg)
+  state.currentSession = ctx.session
+  state.warnings.delete(ctx.session)
   setProcessEnv(cfg)
   launchHeartbeat(cfg)
   registerProcessCleanup()
+
+  void runSandboxLifecycle(ctx).catch(() => {
+    // Post-ready cleanup is best-effort and must not affect the active session.
+  })
+
   return cfg
 }
 
-function configFor(sessionID, baseDirectory) {
-  const launched = launcherConfig()
-  if (launched.active) return launched
+function inactiveBootstrap(session = "") {
+  const cfg = emptyConfig()
+  return {
+    session,
+    status: "inactive",
+    cfg,
+    enforce: false,
+    promise: Promise.resolve(cfg),
+  }
+}
 
+function readyBootstrap(cfg) {
+  return {
+    session: cfg.session,
+    status: "ready",
+    cfg,
+    enforce: true,
+    promise: Promise.resolve(cfg),
+  }
+}
+
+function bootstrapFor(sessionID, baseDirectory) {
   const raw = sessionID || state.currentSession
-  if (!raw || envValue("OPENCODE_SANDBOX_AUTO") === "0") return emptyConfig()
+  if (!raw || envValue("OPENCODE_SANDBOX_AUTO") === "0") return inactiveBootstrap()
 
   const session = sandboxSessionID(raw)
-  return state.sessions.get(session) || createSessionConfig(raw, baseDirectory)
+  const ready = state.sessions.get(session)
+  if (ready) return readyBootstrap(ready)
+
+  const existing = state.bootstraps.get(session)
+  if (existing) return existing
+
+  const ctx = prepareSessionContext(raw, baseDirectory)
+  if (!ctx.active) return inactiveBootstrap(session)
+
+  const entry = {
+    session,
+    status: "pending",
+    cfg: emptyConfig(),
+    enforce: true,
+    cancelled: false,
+    promise: null,
+  }
+  state.bootstraps.set(session, entry)
+  state.currentSession = session
+  entry.promise = deferBootstrap(() => createSessionConfigAsync(ctx, entry)).catch((error) => {
+    entry.status = entry.cancelled ? "cancelled" : "failed"
+    entry.cfg = emptyConfig()
+    if (entry.cancelled) state.bootstraps.delete(session)
+    if (!entry.cancelled) state.warnings.set(session, warningFromError(error, "sandbox creation failed"))
+    return entry.cfg
+  })
+  return entry
+}
+
+function readyConfigFor(sessionID) {
+  const raw = sessionID || state.currentSession
+  if (!raw) return emptyConfig()
+  return state.sessions.get(sandboxSessionID(raw)) || emptyConfig()
+}
+
+async function configForTool(sessionID, baseDirectory) {
+  const entry = bootstrapFor(sessionID, baseDirectory)
+  if (entry.status === "ready") return entry.cfg
+  if (entry.status === "inactive" || !entry.enforce) return emptyConfig()
+
+  const cfg = await entry.promise
+  if (cfg.active) return cfg
+
+  if (entry.status === "failed" && entry.enforce) {
+    const warning = warningFor(entry.session) || "sandbox creation failed"
+    throw new Error(`worktree-sandbox: ${warning}`)
+  }
+
+  return emptyConfig()
 }
 
 function warningFor(sessionID) {
@@ -535,32 +749,45 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
       if (!id) return
 
       if (event.type === "session.created" || event.type === "session.updated") {
-        configFor(id, baseDirectory)
+        bootstrapFor(id, baseDirectory)
         return
       }
 
       if (event.type === "session.idle" || event.type === "session.status") {
-        const cfg = configFor(id, baseDirectory)
+        const entry = bootstrapFor(id, baseDirectory)
+        const cfg = entry.status === "ready" ? entry.cfg : readyConfigFor(id)
         if (cfg.active) touchMarker(cfg)
         return
       }
 
       if (event.type === "session.deleted") {
         const session = sandboxSessionID(id)
+        const entry = state.bootstraps.get(session)
+        if (entry) {
+          entry.cancelled = true
+          if (entry.status !== "pending") state.bootstraps.delete(session)
+        }
         const cfg = state.sessions.get(session)
         if (cfg) cleanupConfig(cfg)
         state.sessions.delete(session)
         state.warnings.delete(session)
+        if (state.currentSession === session) state.currentSession = ""
       }
     },
 
     "experimental.chat.system.transform": async (input, output) => {
-      const cfg = configFor(input?.sessionID, baseDirectory)
+      const entry = bootstrapFor(input?.sessionID, baseDirectory)
+      const cfg = entry.status === "ready" ? entry.cfg : readyConfigFor(input?.sessionID)
       const warning = warningFor(input?.sessionID)
       if (!output || !Array.isArray(output.system)) return
 
       if (cfg.active && cfg.worktree) {
         output.system.push(`worktree-sandbox active. Use this root for all file operations: ${cfg.worktree}`)
+        return
+      }
+
+      if (entry.status === "pending") {
+        output.system.push(PENDING_SYSTEM_CONTEXT)
         return
       }
 
@@ -573,14 +800,16 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
     },
 
     "shell.env": async (input, output) => {
-      const cfg = configFor(input?.sessionID, baseDirectory)
-      if (!cfg.active || !output || !output.env) return
+      if (!output || !output.env) return
+      const cfg = await configForTool(input?.sessionID, baseDirectory)
+      if (!cfg.active) return
       injectShellEnv(cfg, output)
     },
 
     "tool.execute.before": async (input, output) => {
-      const cfg = configFor(input?.sessionID, baseDirectory)
-      if (!cfg.active || !input || !output) return
+      if (!input || !output || !SANDBOXED_TOOLS.has(input.tool)) return
+      const cfg = await configForTool(input?.sessionID, baseDirectory)
+      if (!cfg.active) return
 
       const args = output.args || {}
       const tool = input.tool
