@@ -4,9 +4,9 @@ import {
   acquireBuiltinFilesHidden,
   createBranchObserver,
   createChangedFilesObserver,
-  resolveSandboxWorktree,
-  shouldRenderSandboxFiles,
-  shouldRunTuiPlugin,
+  resolveRenderableSandboxWorktreeAsync,
+  resolveSandboxWorktreeAsync,
+  shouldRunTuiPluginAsync,
   tuiPluginID,
 } from "./worktree-sandbox-branch-core.js"
 
@@ -33,7 +33,7 @@ function BranchBadge(props) {
   const observer = createBranchObserver({
     sessionID: props.sessionID,
     getWorktree() {
-      return resolveSandboxWorktree({
+      return resolveSandboxWorktreeAsync({
         sessionID: props.sessionID,
         directory: api.state.path.directory,
         worktreeHint: api.state.path.worktree,
@@ -109,7 +109,7 @@ function SandboxFiles(props) {
   const observer = createChangedFilesObserver({
     sessionID: props.sessionID,
     getWorktree() {
-      return resolveSandboxWorktree({
+      return resolveRenderableSandboxWorktreeAsync({
         sessionID: props.sessionID,
         directory: api.state.path.directory,
         worktreeHint: api.state.path.worktree,
@@ -181,10 +181,10 @@ function SandboxFiles(props) {
 }
 
 const tui = async (api) => {
-  if (!shouldRunTuiPlugin(MODULE_URL, {
+  if (!(await shouldRunTuiPluginAsync(MODULE_URL, {
     directory: api.state.path.directory,
     worktreeHint: api.state.path.worktree,
-  })) {
+  }))) {
     return
   }
 
@@ -206,13 +206,7 @@ const tui = async (api) => {
     order: 490,
     slots: {
       sidebar_content(_ctx, props) {
-        if (!shouldRenderSandboxFiles({
-          sessionID: props.session_id,
-          directory: api.state.path.directory,
-          worktreeHint: api.state.path.worktree,
-        })) {
-          return null
-        }
+        if (!props.session_id && !process.env.OPENCODE_SANDBOX_WORKTREE) return null
         return <SandboxFiles api={api} sessionID={props.session_id} />
       },
     },

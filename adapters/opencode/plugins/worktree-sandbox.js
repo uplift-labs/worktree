@@ -1,4 +1,4 @@
-import { execFile, execFileSync, spawn } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -19,9 +19,15 @@ const SEARCH_TOOLS = new Set(["grep", "glob"])
 const PATCH_TOOLS = new Set(["apply_patch", "patch"])
 const SANDBOXED_TOOLS = new Set([...PATH_TOOLS, ...SEARCH_TOOLS, ...PATCH_TOOLS, "bash"])
 const DEFAULT_EXEC_MAX_BUFFER = 10 * 1024 * 1024
+const DEFAULT_GIT_TIMEOUT_MS = 3000
 const PENDING_SYSTEM_CONTEXT = [
   "worktree-sandbox is preparing a sandbox for this session.",
   "Use relative project paths; supported tools will be routed to the sandbox before execution.",
+  "Do not target the main repository path directly.",
+].join(" ")
+const CHECKING_SYSTEM_CONTEXT = [
+  "worktree-sandbox is checking whether this session needs a sandbox.",
+  "Use relative project paths; supported tools will wait for sandbox readiness when sandboxing applies.",
   "Do not target the main repository path directly.",
 ].join(" ")
 
@@ -33,6 +39,25 @@ function commandOutput(value) {
   if (!value) return ""
   if (Buffer.isBuffer(value)) return value.toString("utf8")
   return String(value)
+}
+
+function parsePositiveInt(value, fallback) {
+  const next = Number.parseInt(String(value || ""), 10)
+  return Number.isFinite(next) && next > 0 ? next : fallback
+}
+
+function gitTimeoutMs() {
+  return parsePositiveInt(envValue("AISB_OPENCODE_GIT_TIMEOUT_MS"), DEFAULT_GIT_TIMEOUT_MS)
+}
+
+async function pathExistsAsync(file) {
+  if (!file) return false
+  try {
+    await fs.promises.access(file)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function toPosix(file) {
@@ -96,11 +121,11 @@ function emptyConfig() {
   }
 }
 
-function hasCore(root) {
-  return !!root && fs.existsSync(path.join(root, "core", "cmd", "sandbox-init.sh"))
+async function hasCoreAsync(root) {
+  return !!root && (await pathExistsAsync(path.join(root, "core", "cmd", "sandbox-init.sh")))
 }
 
-function findSandboxRoot(repo) {
+async function findSandboxRootAsync(repo) {
   const candidates = []
   if (envValue("OPENCODE_SANDBOX_ROOT")) candidates.push(envValue("OPENCODE_SANDBOX_ROOT"))
   if (repo) {
@@ -117,29 +142,26 @@ function findSandboxRoot(repo) {
   }
 
   for (const candidate of candidates) {
-    if (hasCore(candidate)) return candidate
+    if (await hasCoreAsync(candidate)) return candidate
   }
   return ""
 }
 
-function gitOutput(args, cwd) {
-  return execFileSync("git", ["-C", cwd, ...args], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim()
+async function gitOutputAsync(args, cwd) {
+  return (await execFileAsync("git", ["-C", cwd, ...args], { timeout: gitTimeoutMs() })).trim()
 }
 
-function resolveRepo(base) {
+async function resolveRepoAsync(base) {
   try {
-    return gitOutput(["rev-parse", "--show-toplevel"], base)
+    return await gitOutputAsync(["rev-parse", "--show-toplevel"], base)
   } catch {
     return ""
   }
 }
 
-function resolveGitCommonDir(repo) {
+async function resolveGitCommonDirAsync(repo) {
   try {
-    const common = gitOutput(["rev-parse", "--git-common-dir"], repo)
+    const common = await gitOutputAsync(["rev-parse", "--git-common-dir"], repo)
     if (path.isAbsolute(common) || /^[A-Za-z]:[\\/]/.test(common)) return path.resolve(common)
     return path.resolve(repo, common)
   } catch {
@@ -191,37 +213,6 @@ function execFileAsync(command, args, options = {}) {
   })
 }
 
-function resolveBash() {
-  if (cachedBash) return cachedBash
-
-  const candidates = []
-  const add = (candidate) => {
-    if (candidate && !candidates.includes(candidate)) candidates.push(candidate)
-  }
-
-  add(envValue("WORKTREE_SANDBOX_BASH"))
-  add(envValue("GIT_BASH"))
-  if (process.platform === "win32") {
-    add("C:\\Program Files\\Git\\bin\\bash.exe")
-    add("C:\\Program Files\\Git\\usr\\bin\\bash.exe")
-    add("C:\\Program Files (x86)\\Git\\bin\\bash.exe")
-  }
-  add("bash")
-
-  for (const candidate of candidates) {
-    if ((path.isAbsolute(candidate) || /^[A-Za-z]:[\\/]/.test(candidate)) && !fs.existsSync(candidate)) continue
-    try {
-      execFileSync(candidate, ["--version"], { stdio: "ignore", timeout: 3000 })
-      cachedBash = candidate
-      return candidate
-    } catch {
-      // Try the next candidate. On Windows, bare bash can resolve to WSL.
-    }
-  }
-
-  throw new Error("bash command not found")
-}
-
 async function resolveBashAsync() {
   if (cachedBash) return cachedBash
   if (cachedBashPromise) return cachedBashPromise
@@ -242,7 +233,7 @@ async function resolveBashAsync() {
     add("bash")
 
     for (const candidate of candidates) {
-      if ((path.isAbsolute(candidate) || /^[A-Za-z]:[\\/]/.test(candidate)) && !fs.existsSync(candidate)) continue
+      if ((path.isAbsolute(candidate) || /^[A-Za-z]:[\\/]/.test(candidate)) && !(await pathExistsAsync(candidate))) continue
       try {
         await execFileAsync(candidate, ["--version"], { timeout: 3000, maxBuffer: 1024 * 1024 })
         cachedBash = candidate
@@ -262,14 +253,6 @@ async function resolveBashAsync() {
   }
 }
 
-function execSandbox(root, rel, args, options = {}) {
-  return execFileSync(resolveBash(), [path.join(root, rel), ...args], {
-    cwd: options.cwd || root,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  })
-}
-
 async function execSandboxAsync(root, rel, args, options = {}) {
   const bash = await resolveBashAsync()
   return execFileAsync(bash, [path.join(root, rel), ...args], {
@@ -278,8 +261,9 @@ async function execSandboxAsync(root, rel, args, options = {}) {
   })
 }
 
-function markerPath(cfg) {
-  const common = resolveGitCommonDir(cfg.repo)
+async function markerPathAsync(cfg) {
+  if (cfg.marker) return cfg.marker
+  const common = await resolveGitCommonDirAsync(cfg.repo)
   return common ? path.join(common, "sandbox-markers", cfg.session) : ""
 }
 
@@ -294,18 +278,18 @@ function setProcessEnv(cfg) {
   process.env.OPENCODE_SANDBOX_BRANCH_PREFIX = cfg.branchPrefix
 }
 
-function touchMarker(cfg) {
-  const marker = markerPath(cfg)
-  if (!marker || !fs.existsSync(marker)) return
+async function touchMarkerAsync(cfg) {
+  const marker = await markerPathAsync(cfg)
+  if (!marker || !(await pathExistsAsync(marker))) return
   const now = new Date()
   try {
-    fs.utimesSync(marker, now, now)
+    await fs.promises.utimes(marker, now, now)
   } catch {
     // Heartbeat/lifecycle TTL is a safety net if this best-effort touch fails.
   }
 }
 
-function killHeartbeat(cfg) {
+function killHeartbeatProcess(cfg) {
   const hb = state.heartbeats.get(cfg.session)
   if (hb) {
     try {
@@ -315,12 +299,17 @@ function killHeartbeat(cfg) {
     }
     state.heartbeats.delete(cfg.session)
   }
+}
 
-  const sidecar = `${markerPath(cfg)}.hb`
-  if (!sidecar || !fs.existsSync(sidecar)) return
+async function killHeartbeatAsync(cfg) {
+  killHeartbeatProcess(cfg)
+
+  const marker = await markerPathAsync(cfg)
+  const sidecar = marker ? `${marker}.hb` : ""
+  if (!sidecar || !(await pathExistsAsync(sidecar))) return
 
   try {
-    const pid = fs.readFileSync(sidecar, "utf8").trim().split(/\s+/)[0]
+    const pid = (await fs.promises.readFile(sidecar, "utf8")).trim().split(/\s+/)[0]
     if (pid) {
       try {
         process.kill(Number(pid))
@@ -328,29 +317,53 @@ function killHeartbeat(cfg) {
         // The heartbeat may already have exited.
       }
     }
-    fs.rmSync(sidecar, { force: true })
+    await fs.promises.rm(sidecar, { force: true })
   } catch {
     // Cleanup must never make OpenCode fail to exit.
   }
 }
 
-function cleanupConfig(cfg) {
+function cleanupArgs(cfg) {
+  return [
+    "--repo",
+    cfg.repo,
+    "--session",
+    cfg.session,
+    "--trust-dead",
+    "--worktrees-dir",
+    cfg.worktreesDir,
+    "--branch-prefix",
+    cfg.branchGlob,
+  ]
+}
+
+async function cleanupConfigAsync(cfg) {
   if (!cfg.active || !cfg.auto) return
-  killHeartbeat(cfg)
+  await killHeartbeatAsync(cfg)
   try {
-    execSandbox(cfg.root, "core/cmd/sandbox-cleanup.sh", [
-      "--repo",
-      cfg.repo,
-      "--session",
-      cfg.session,
-      "--trust-dead",
-      "--worktrees-dir",
-      cfg.worktreesDir,
-      "--branch-prefix",
-      cfg.branchGlob,
-    ])
+    await execSandboxAsync(cfg.root, "core/cmd/sandbox-cleanup.sh", cleanupArgs(cfg))
   } catch {
     // Fail open. Stale markers are still TTL-managed by sandbox-lifecycle.
+  }
+}
+
+function detachedBashCommand() {
+  return cachedBash || envValue("WORKTREE_SANDBOX_BASH") || envValue("GIT_BASH") || "bash"
+}
+
+function cleanupConfigDetached(cfg) {
+  if (!cfg.active || !cfg.auto) return
+  killHeartbeatProcess(cfg)
+  try {
+    const child = spawn(detachedBashCommand(), [path.join(cfg.root, "core/cmd/sandbox-cleanup.sh"), ...cleanupArgs(cfg)], {
+      cwd: cfg.root,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    })
+    child.unref()
+  } catch {
+    // Process exit cleanup is best-effort; heartbeat/lifecycle TTL remains.
   }
 }
 
@@ -358,17 +371,18 @@ function registerProcessCleanup() {
   if (state.cleanupRegistered) return
   state.cleanupRegistered = true
   process.once("exit", () => {
-    for (const cfg of state.sessions.values()) cleanupConfig(cfg)
+    for (const cfg of state.sessions.values()) cleanupConfigDetached(cfg)
   })
 }
 
-function launchHeartbeat(cfg) {
-  const marker = markerPath(cfg)
-  if (!marker || !fs.existsSync(marker)) return
+async function launchHeartbeatAsync(cfg) {
+  const marker = await markerPathAsync(cfg)
+  if (!marker || !(await pathExistsAsync(marker))) return
+  const bash = await resolveBashAsync()
 
   const pidArgs = process.platform === "win32" ? ["--pid", "0", "--parent-winpid", String(process.pid)] : ["--pid", String(process.pid)]
   const child = spawn(
-    resolveBash(),
+    bash,
     [
       path.join(cfg.root, "core/lib/heartbeat.sh"),
       ...pidArgs,
@@ -385,7 +399,7 @@ function launchHeartbeat(cfg) {
       "--owner-process-names",
       "opencode,opencode.exe,node,node.exe,bun,bun.exe",
     ],
-    { detached: true, stdio: "ignore" },
+    { detached: true, stdio: "ignore", windowsHide: true },
   )
   child.unref()
   state.heartbeats.set(cfg.session, child)
@@ -405,9 +419,9 @@ function bootstrapDebug(session, phase, startedAt) {
   console.error(`worktree-sandbox bootstrap ${phase} session=${session}${elapsed}`)
 }
 
-function currentBranch(repo) {
+async function currentBranchAsync(repo) {
   try {
-    return gitOutput(["branch", "--show-current"], repo)
+    return await gitOutputAsync(["branch", "--show-current"], repo)
   } catch {
     return ""
   }
@@ -449,26 +463,29 @@ async function runSandboxLifecycle(ctx) {
   return execSandboxAsync(ctx.root, "core/cmd/sandbox-lifecycle.sh", lifecycleArgs(ctx))
 }
 
-function prepareSessionContext(sessionID, baseDirectory) {
+async function prepareSessionContextAsync(sessionID, baseDirectory) {
   const session = sandboxSessionID(sessionID)
-  const repo = resolveRepo(baseDirectory)
+  const repo = await resolveRepoAsync(baseDirectory)
   if (!repo) return { session, active: false }
 
-  const branch = currentBranch(repo)
+  const branch = await currentBranchAsync(repo)
   if (branch !== "main" && branch !== "master") return { session, active: false }
 
-  const root = findSandboxRoot(repo)
+  const root = await findSandboxRootAsync(repo)
   if (!root) {
     state.warnings.set(session, "installed sandbox core not found")
     return { session, active: false }
   }
 
   const brPrefix = branchPrefix()
+  const common = await resolveGitCommonDirAsync(repo)
+  const marker = common ? path.join(common, "sandbox-markers", session) : ""
   return {
     active: true,
     session,
     repo,
     root,
+    marker,
     worktreesDir: worktreesDir(repo, root),
     branchPrefix: brPrefix,
     branchGlob: branchGlob(brPrefix),
@@ -521,6 +538,7 @@ async function createSessionConfigAsync(ctx, entry) {
     repo: ctx.repo,
     root: ctx.root,
     worktree,
+    marker: ctx.marker,
     worktreesDir: ctx.worktreesDir,
     branchPrefix: ctx.branchPrefix,
     branchGlob: ctx.branchGlob,
@@ -528,7 +546,7 @@ async function createSessionConfigAsync(ctx, entry) {
   }
 
   if (entry.cancelled) {
-    cleanupConfig(cfg)
+    await cleanupConfigAsync(cfg)
     entry.status = "cancelled"
     entry.cfg = emptyConfig()
     state.bootstraps.delete(ctx.session)
@@ -541,7 +559,9 @@ async function createSessionConfigAsync(ctx, entry) {
   state.currentSession = ctx.session
   state.warnings.delete(ctx.session)
   setProcessEnv(cfg)
-  launchHeartbeat(cfg)
+  await launchHeartbeatAsync(cfg).catch(() => {
+    // Lifecycle TTL still protects sessions if heartbeat launch fails.
+  })
   registerProcessCleanup()
 
   void runSandboxLifecycle(ctx).catch(() => {
@@ -551,6 +571,47 @@ async function createSessionConfigAsync(ctx, entry) {
   return cfg
 }
 
+function failBootstrap(entry, session, error) {
+  entry.status = entry.cancelled ? "cancelled" : "failed"
+  entry.cfg = emptyConfig()
+  if (entry.cancelled) state.bootstraps.delete(session)
+  if (!entry.cancelled) state.warnings.set(session, warningFromError(error, "sandbox creation failed"))
+  return entry.cfg
+}
+
+function startBootstrap(entry, raw, baseDirectory) {
+  entry.contextPromise = deferBootstrap(async () => {
+    const ctx = await prepareSessionContextAsync(raw, baseDirectory)
+    if (entry.cancelled) {
+      entry.status = "cancelled"
+      entry.cfg = emptyConfig()
+      state.bootstraps.delete(entry.session)
+      return ctx
+    }
+
+    if (!ctx.active) {
+      entry.status = "inactive"
+      entry.enforce = false
+      entry.cfg = emptyConfig()
+      state.bootstraps.delete(entry.session)
+      return ctx
+    }
+
+    entry.status = "pending"
+    entry.initPromise = createSessionConfigAsync(ctx, entry).catch((error) => failBootstrap(entry, entry.session, error))
+    return ctx
+  }).catch((error) => {
+    failBootstrap(entry, entry.session, error)
+    return { session: entry.session, active: false }
+  })
+
+  entry.promise = entry.contextPromise.then(async () => {
+    if (entry.initPromise) return entry.initPromise
+    return entry.cfg || emptyConfig()
+  })
+  return entry
+}
+
 function inactiveBootstrap(session = "") {
   const cfg = emptyConfig()
   return {
@@ -558,6 +619,7 @@ function inactiveBootstrap(session = "") {
     status: "inactive",
     cfg,
     enforce: false,
+    contextPromise: Promise.resolve({ session, active: false }),
     promise: Promise.resolve(cfg),
   }
 }
@@ -568,6 +630,7 @@ function readyBootstrap(cfg) {
     status: "ready",
     cfg,
     enforce: true,
+    contextPromise: Promise.resolve({ session: cfg.session, active: true }),
     promise: Promise.resolve(cfg),
   }
 }
@@ -583,27 +646,19 @@ function bootstrapFor(sessionID, baseDirectory) {
   const existing = state.bootstraps.get(session)
   if (existing) return existing
 
-  const ctx = prepareSessionContext(raw, baseDirectory)
-  if (!ctx.active) return inactiveBootstrap(session)
-
   const entry = {
     session,
-    status: "pending",
+    status: "preparing",
     cfg: emptyConfig(),
     enforce: true,
     cancelled: false,
+    contextPromise: null,
+    initPromise: null,
     promise: null,
   }
   state.bootstraps.set(session, entry)
   state.currentSession = session
-  entry.promise = deferBootstrap(() => createSessionConfigAsync(ctx, entry)).catch((error) => {
-    entry.status = entry.cancelled ? "cancelled" : "failed"
-    entry.cfg = emptyConfig()
-    if (entry.cancelled) state.bootstraps.delete(session)
-    if (!entry.cancelled) state.warnings.set(session, warningFromError(error, "sandbox creation failed"))
-    return entry.cfg
-  })
-  return entry
+  return startBootstrap(entry, raw, baseDirectory)
 }
 
 function readyConfigFor(sessionID) {
@@ -682,30 +737,13 @@ function patchTargets(patchText, base) {
 
 function guardPath(cfg, file) {
   if (!cfg.active || !file) return
-  const guard = path.join(cfg.root, "core", "cmd", "sandbox-guard.sh")
-  if (!fs.existsSync(guard)) return
+  const target = absolutize(file, cfg.worktree || cfg.repo)
+  if (isWithin(target, cfg.worktree)) return
 
-  try {
-    execFileSync(
-      resolveBash(),
-      [
-        guard,
-        "--session",
-        cfg.session,
-        "--file",
-        file,
-        "--repo",
-        cfg.repo,
-        "--worktrees-dir",
-        cfg.worktreesDir,
-      ],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  if (isWithin(target, cfg.repo)) {
+    throw new Error(
+      `sandbox-guard: edit blocked - session ${cfg.session} has sandbox at ${cfg.worktree}, but target is in main repo (${target}). Edit the sandbox copy and merge via git.`,
     )
-  } catch (error) {
-    if (error && error.status === 1) {
-      const reason = (commandOutput(error.stdout) || commandOutput(error.stderr)).trim()
-      throw new Error(reason || "worktree-sandbox blocked a write outside the sandbox")
-    }
   }
 }
 
@@ -756,7 +794,7 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
       if (event.type === "session.idle" || event.type === "session.status") {
         const entry = bootstrapFor(id, baseDirectory)
         const cfg = entry.status === "ready" ? entry.cfg : readyConfigFor(id)
-        if (cfg.active) touchMarker(cfg)
+        if (cfg.active) void touchMarkerAsync(cfg)
         return
       }
 
@@ -765,10 +803,10 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
         const entry = state.bootstraps.get(session)
         if (entry) {
           entry.cancelled = true
-          if (entry.status !== "pending") state.bootstraps.delete(session)
+          if (entry.status !== "pending" && entry.status !== "preparing") state.bootstraps.delete(session)
         }
         const cfg = state.sessions.get(session)
-        if (cfg) cleanupConfig(cfg)
+        if (cfg) void cleanupConfigAsync(cfg)
         state.sessions.delete(session)
         state.warnings.delete(session)
         if (state.currentSession === session) state.currentSession = ""
@@ -783,6 +821,11 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
 
       if (cfg.active && cfg.worktree) {
         output.system.push(`worktree-sandbox active. Use this root for all file operations: ${cfg.worktree}`)
+        return
+      }
+
+      if (entry.status === "preparing") {
+        output.system.push(CHECKING_SYSTEM_CONTEXT)
         return
       }
 

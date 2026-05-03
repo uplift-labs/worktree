@@ -63,6 +63,16 @@ function gitOutputAsync(args, cwd, env = process.env) {
   })
 }
 
+async function pathExistsAsync(file) {
+  if (!file) return false
+  try {
+    await fs.promises.access(file)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function parsePositiveInt(value, fallback) {
   const next = Number.parseInt(String(value || ""), 10)
   return Number.isFinite(next) && next > 0 ? next : fallback
@@ -146,6 +156,19 @@ export function shouldRunTuiPlugin(moduleURL = "", input = {}) {
   return !fs.existsSync(sandboxPlugin)
 }
 
+export async function shouldRunTuiPluginAsync(moduleURL = "", input = {}) {
+  const env = input.env || process.env
+  const worktree = await resolveSandboxWorktreeAsync({ ...input, env })
+  const directory = input.directory || input.worktreeHint || process.cwd()
+  if (!worktree || !directory || !isWithinPath(directory, worktree)) return true
+
+  const modulePath = moduleFilePath(moduleURL)
+  if (!modulePath || isWithinPath(modulePath, worktree)) return true
+
+  const sandboxPlugin = path.join(worktree, ".opencode", "tui-plugins", path.basename(modulePath))
+  return !(await pathExistsAsync(sandboxPlugin))
+}
+
 export function shouldRenderSandboxFiles(input = {}) {
   const env = input.env || process.env
   const directory = input.directory || input.worktreeHint || process.cwd()
@@ -157,6 +180,26 @@ export function shouldRenderSandboxFiles(input = {}) {
 
   const worktree = resolveSandboxWorktree({ ...input, env })
   return !!worktree && !!directory && !isWithinPath(directory, worktree)
+}
+
+export async function shouldRenderSandboxFilesAsync(input = {}) {
+  return !!(await resolveRenderableSandboxWorktreeAsync(input))
+}
+
+export async function resolveRenderableSandboxWorktreeAsync(input = {}) {
+  const env = input.env || process.env
+  const directory = input.directory || input.worktreeHint || process.cwd()
+
+  const direct = envValue(env, "OPENCODE_SANDBOX_WORKTREE")
+  if (direct) {
+    if (!(await pathExistsAsync(direct))) return ""
+    return !!directory && !isWithinPath(directory, direct) ? path.resolve(direct) : ""
+  }
+
+  if (isLikelySandboxWorktreePath(directory, env) || isLikelySandboxWorktreePath(input.worktreeHint, env)) return ""
+
+  const worktree = await resolveSandboxWorktreeAsync({ ...input, env })
+  return !!worktree && !!directory && !isWithinPath(directory, worktree) ? worktree : ""
 }
 
 export function sandboxSessionID(sessionID, env = process.env) {
@@ -215,10 +258,30 @@ export function resolveRepo(base) {
   }
 }
 
+export async function resolveRepoAsync(base, env = process.env) {
+  if (!base) return ""
+  try {
+    return await gitOutputAsync(["rev-parse", "--show-toplevel"], base, env)
+  } catch {
+    return ""
+  }
+}
+
 export function resolveGitCommonDir(repo) {
   if (!repo) return ""
   try {
     const common = gitOutput(["rev-parse", "--git-common-dir"], repo)
+    if (path.isAbsolute(common) || /^[A-Za-z]:[\\/]/.test(common)) return path.resolve(common)
+    return path.resolve(repo, common)
+  } catch {
+    return ""
+  }
+}
+
+export async function resolveGitCommonDirAsync(repo, env = process.env) {
+  if (!repo) return ""
+  try {
+    const common = await gitOutputAsync(["rev-parse", "--git-common-dir"], repo, env)
     if (path.isAbsolute(common) || /^[A-Za-z]:[\\/]/.test(common)) return path.resolve(common)
     return path.resolve(repo, common)
   } catch {
@@ -237,8 +300,24 @@ export function resolveGitDir(worktree) {
   }
 }
 
+export async function resolveGitDirAsync(worktree, env = process.env) {
+  if (!worktree) return ""
+  try {
+    const gitDir = await gitOutputAsync(["rev-parse", "--git-dir"], worktree, env)
+    if (path.isAbsolute(gitDir) || /^[A-Za-z]:[\\/]/.test(gitDir)) return path.resolve(gitDir)
+    return path.resolve(worktree, gitDir)
+  } catch {
+    return ""
+  }
+}
+
 export function resolveHeadPath(worktree) {
   const gitDir = resolveGitDir(worktree)
+  return gitDir ? path.join(gitDir, "HEAD") : ""
+}
+
+export async function resolveHeadPathAsync(worktree, env = process.env) {
+  const gitDir = await resolveGitDirAsync(worktree, env)
   return gitDir ? path.join(gitDir, "HEAD") : ""
 }
 
@@ -262,6 +341,10 @@ async function readCurrentBranchAsync(worktree, env = process.env) {
 
 function readMarkerBranch(marker) {
   return readMarkerField(marker, 0)
+}
+
+async function readMarkerBranchAsync(marker) {
+  return readMarkerFieldAsync(marker, 0)
 }
 
 function clonePluginEnabled(value) {
@@ -347,10 +430,23 @@ function readMarkerInitialHead(marker) {
   return readMarkerField(marker, 2)
 }
 
+async function readMarkerInitialHeadAsync(marker) {
+  return readMarkerFieldAsync(marker, 2)
+}
+
 function readMarkerField(marker, index) {
   if (!marker || !fs.existsSync(marker)) return ""
   try {
     return fs.readFileSync(marker, "utf8").trim().split(/\s+/)[index] || ""
+  } catch {
+    return ""
+  }
+}
+
+async function readMarkerFieldAsync(marker, index) {
+  if (!marker || !(await pathExistsAsync(marker))) return ""
+  try {
+    return (await fs.promises.readFile(marker, "utf8")).trim().split(/\s+/)[index] || ""
   } catch {
     return ""
   }
@@ -368,6 +464,26 @@ function worktreeFromList(repo, branch) {
         continue
       }
       if (line === `branch refs/heads/${branch}` && current && fs.existsSync(current)) return current
+    }
+  } catch {
+    return ""
+  }
+
+  return ""
+}
+
+async function worktreeFromListAsync(repo, branch, env = process.env) {
+  if (!repo || !branch) return ""
+
+  let current = ""
+  try {
+    for (const raw of (await gitOutputAsync(["worktree", "list", "--porcelain"], repo, env)).split(/\r?\n/)) {
+      const line = raw.trimEnd()
+      if (line.startsWith("worktree ")) {
+        current = line.slice("worktree ".length)
+        continue
+      }
+      if (line === `branch refs/heads/${branch}` && current && (await pathExistsAsync(current))) return current
     }
   } catch {
     return ""
@@ -396,6 +512,15 @@ function worktreeFromKnownLayout(repo, branch, env) {
   for (const dir of configuredWorktreesDirs(repo, env)) {
     const candidate = path.join(dir, branch)
     if (fs.existsSync(candidate)) return candidate
+  }
+  return ""
+}
+
+async function worktreeFromKnownLayoutAsync(repo, branch, env) {
+  if (!repo || !branch) return ""
+  for (const dir of configuredWorktreesDirs(repo, env)) {
+    const candidate = path.join(dir, branch)
+    if (await pathExistsAsync(candidate)) return candidate
   }
   return ""
 }
@@ -430,6 +555,16 @@ function inferCurrentSandboxWorktree(repo, env) {
   return path.basename(path.resolve(worktree)) === branch ? path.resolve(worktree) : ""
 }
 
+async function inferCurrentSandboxWorktreeAsync(repo, env) {
+  if (!repo) return ""
+  const branch = await readCurrentBranchAsync(repo, env)
+  if (!isSandboxBranch(branch, env)) return ""
+
+  const worktree = await worktreeFromListAsync(repo, branch, env)
+  if (!worktree) return ""
+  return path.basename(path.resolve(worktree)) === branch ? path.resolve(worktree) : ""
+}
+
 export function resolveSandboxWorktree(input = {}) {
   const env = input.env || process.env
   const direct = envValue(env, "OPENCODE_SANDBOX_WORKTREE")
@@ -442,6 +577,20 @@ export function resolveSandboxWorktree(input = {}) {
   if (!branch) return inferCurrentSandboxWorktree(repo, env)
 
   return worktreeFromList(repo, branch) || worktreeFromKnownLayout(repo, branch, env)
+}
+
+export async function resolveSandboxWorktreeAsync(input = {}) {
+  const env = input.env || process.env
+  const direct = envValue(env, "OPENCODE_SANDBOX_WORKTREE")
+  if (envValue(env, "OPENCODE_SANDBOX_ACTIVE") === "1" && direct && (await pathExistsAsync(direct))) return path.resolve(direct)
+
+  const base = input.directory || input.worktreeHint || envValue(env, "OPENCODE_SANDBOX_REPO") || process.cwd()
+  const repo = await resolveRepoAsync(base, env)
+  const marker = await resolveSandboxMarkerAsync({ ...input, directory: base, env })
+  const branch = await readMarkerBranchAsync(marker)
+  if (!branch) return inferCurrentSandboxWorktreeAsync(repo, env)
+
+  return (await worktreeFromListAsync(repo, branch, env)) || (await worktreeFromKnownLayoutAsync(repo, branch, env))
 }
 
 export function resolveSandboxMarker(input = {}) {
@@ -457,6 +606,23 @@ export function resolveSandboxMarker(input = {}) {
   for (const id of ids) {
     const marker = path.join(common, "sandbox-markers", id)
     if (fs.existsSync(marker)) return marker
+  }
+  return ids[0] ? path.join(common, "sandbox-markers", ids[0]) : ""
+}
+
+export async function resolveSandboxMarkerAsync(input = {}) {
+  const env = input.env || process.env
+  const base = input.directory || input.worktreeHint || input.worktree || envValue(env, "OPENCODE_SANDBOX_REPO") || process.cwd()
+  const repo = await resolveRepoAsync(base, env)
+  if (!repo) return ""
+
+  const common = await resolveGitCommonDirAsync(repo, env)
+  if (!common) return ""
+
+  const ids = sandboxSessionIDCandidates(input.sessionID, env)
+  for (const id of ids) {
+    const marker = path.join(common, "sandbox-markers", id)
+    if (await pathExistsAsync(marker)) return marker
   }
   return ids[0] ? path.join(common, "sandbox-markers", ids[0]) : ""
 }
@@ -518,8 +684,8 @@ export async function resolveSandboxBaseRefAsync(input = {}, worktree = "") {
   const mainBase = await resolveMainMergeBaseAsync(worktree, env)
   if (mainBase) return mainBase
 
-  const marker = resolveSandboxMarker({ ...input, worktree, env })
-  const initialHead = readMarkerInitialHead(marker)
+  const marker = await resolveSandboxMarkerAsync({ ...input, worktree, env })
+  const initialHead = await readMarkerInitialHeadAsync(marker)
   return (await gitCommitExistsAsync(worktree, initialHead, env)) ? initialHead : ""
 }
 
@@ -607,7 +773,7 @@ export function readSandboxChangedFiles(worktree, input = {}) {
 }
 
 export async function readSandboxChangedFilesAsync(worktree, input = {}) {
-  if (!worktree || !fs.existsSync(worktree)) return []
+  if (!worktree || !(await pathExistsAsync(worktree))) return []
 
   const env = input.env || process.env
   const files = new Map()
@@ -683,6 +849,7 @@ export function createBranchObserver(options = {}) {
   }
 
   const startPolling = () => {
+    if (state.stopped) return
     const nextMs = branchRefreshMs(env, state.watcherActive)
     if (state.pollTimer && state.pollMs === nextMs) return
     clearIntervalTimer(state.pollTimer)
@@ -693,7 +860,8 @@ export function createBranchObserver(options = {}) {
     unrefTimer(state.pollTimer)
   }
 
-  const startWatcher = (worktree) => {
+  const startWatcher = async (worktree) => {
+    if (state.stopped) return
     closeWatcher(state)
     state.headPath = ""
 
@@ -702,11 +870,14 @@ export function createBranchObserver(options = {}) {
       return
     }
 
-    const headPath = resolveHeadPath(worktree)
-    if (!headPath || !fs.existsSync(headPath)) {
+    const headPath = await resolveHeadPathAsync(worktree, env)
+    if (state.stopped) return
+    if (!headPath || !(await pathExistsAsync(headPath))) {
+      if (state.stopped) return
       startPolling()
       return
     }
+    if (state.stopped) return
 
     state.headPath = headPath
     try {
@@ -726,6 +897,10 @@ export function createBranchObserver(options = {}) {
         startPolling()
       })
       if (typeof watcher.unref === "function") watcher.unref()
+      if (state.stopped) {
+        watcher.close()
+        return
+      }
       state.watcher = watcher
       state.watcherActive = true
     } catch (error) {
@@ -736,9 +911,10 @@ export function createBranchObserver(options = {}) {
     startPolling()
   }
 
-  const resolveWorktree = () => {
-    const worktree = typeof options.getWorktree === "function" ? options.getWorktree() : resolveSandboxWorktree(options)
-    return worktree ? path.resolve(worktree) : ""
+  const resolveWorktree = async () => {
+    const worktree = typeof options.getWorktree === "function" ? options.getWorktree() : resolveSandboxWorktreeAsync(options)
+    const resolved = worktree && typeof worktree.then === "function" ? await worktree : worktree
+    return resolved ? path.resolve(resolved) : ""
   }
 
   const refresh = async (reason) => {
@@ -750,13 +926,16 @@ export function createBranchObserver(options = {}) {
 
     state.refreshing = true
     try {
-      const worktree = resolveWorktree()
+      const worktree = await resolveWorktree()
+      if (state.stopped) return
       if (worktree !== state.worktree) {
         state.worktree = worktree
-        startWatcher(worktree)
+        await startWatcher(worktree)
+        if (state.stopped) return
       }
 
-      const branch = worktree ? readCurrentBranch(worktree) : ""
+      const branch = worktree ? await readCurrentBranchAsync(worktree, env) : ""
+      if (state.stopped) return
       if (branch !== state.branch) {
         state.branch = branch
         if (typeof options.onChange === "function") options.onChange({ branch, worktree, reason })
@@ -857,7 +1036,7 @@ export function createChangedFilesObserver(options = {}) {
   }
 
   const resolveWorktree = async () => {
-    const worktree = typeof options.getWorktree === "function" ? options.getWorktree() : resolveSandboxWorktree(options)
+    const worktree = typeof options.getWorktree === "function" ? options.getWorktree() : resolveSandboxWorktreeAsync(options)
     const resolved = worktree && typeof worktree.then === "function" ? await worktree : worktree
     return resolved ? path.resolve(resolved) : ""
   }

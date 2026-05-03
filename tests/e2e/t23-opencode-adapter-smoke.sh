@@ -12,6 +12,17 @@ trap fixture_cleanup EXIT
 REPO=$(fixture_repo "t23")
 
 echo "== plugin auto-creates session sandbox and guards tools =="
+if grep -q 'execFileSync' "$ROOT/adapters/opencode/plugins/worktree-sandbox.js" 2>/dev/null; then
+  assert_exit "OpenCode runtime plugin has no sync child_process calls" 0 1
+else
+  assert_exit "OpenCode runtime plugin has no sync child_process calls" 0 0
+fi
+if grep -Eq 'resolveSandboxWorktree\(|shouldRenderSandboxFiles\(' "$ROOT/adapters/opencode/tui/worktree-sandbox-branch.tsx" 2>/dev/null; then
+  assert_exit "OpenCode TUI render path uses async sandbox resolution" 0 1
+else
+  assert_exit "OpenCode TUI render path uses async sandbox resolution" 0 0
+fi
+
 if command -v node >/dev/null 2>&1; then
   NODE_ASYNC_SCRIPT="$FIXTURE_ROOT/opencode-plugin-async-smoke.mjs"
   cat > "$NODE_ASYNC_SCRIPT" <<'JS'
@@ -26,6 +37,19 @@ const marker = path.join(repo, ".git", "sandbox-markers", sessionID)
 
 function posix(value) {
   return String(value || "").replace(/\\/g, "/")
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitFor(predicate, timeoutMs, label) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return
+    await sleep(50)
+  }
+  throw new Error(`timed out waiting for ${label}`)
 }
 
 function writeExecutable(file, text) {
@@ -73,6 +97,7 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
+sleep 1
 rm -rf "$REPO/$WT_DIR/wt-$SESSION"
 rm -f "$REPO/.git/sandbox-markers/$SESSION" "$REPO/.git/sandbox-markers/$SESSION.hb"
 `,
@@ -104,7 +129,9 @@ const system = { system: [] }
 started = Date.now()
 await hooks["experimental.chat.system.transform"]({ sessionID, model: {} }, system)
 if (Date.now() - started > 300) throw new Error("system transform blocked on sandbox init")
-if (!system.system.join("\n").includes("preparing a sandbox")) throw new Error("pending system context missing")
+if (!/(checking whether this session needs a sandbox|preparing a sandbox)/.test(system.system.join("\n"))) {
+  throw new Error("non-blocking sandbox system context missing")
+}
 if (fs.existsSync(sandbox)) throw new Error("sandbox was created before the async barrier")
 
 const write = { args: { filePath: "created.txt" } }
@@ -130,9 +157,10 @@ const shell = { env: {} }
 await hooks["shell.env"]({ sessionID, cwd: repo }, shell)
 if (posix(shell.env.OPENCODE_SANDBOX_WORKTREE) !== posix(sandbox)) throw new Error("shell env missing async sandbox")
 
+started = Date.now()
 await hooks.event({ event: { type: "session.deleted", properties: { sessionID } } })
-if (fs.existsSync(sandbox)) throw new Error("async sandbox was not cleaned up")
-if (fs.existsSync(marker)) throw new Error("async marker was not cleaned up")
+if (Date.now() - started > 300) throw new Error("session.deleted blocked on sandbox cleanup")
+await waitFor(() => !fs.existsSync(sandbox) && !fs.existsSync(marker), 3000, "async sandbox cleanup")
 
 const cancelSessionID = "oc-cancelboot"
 const cancelSandbox = path.join(repo, ".sandbox", "worktrees", `wt-${cancelSessionID}`)
@@ -209,6 +237,19 @@ const marker = path.join(repo, ".git", "sandbox-markers", compactSessionID)
 
 function posix(value) {
   return String(value || "").replace(/\\/g, "/")
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitFor(predicate, timeoutMs, label) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return
+    await sleep(50)
+  }
+  throw new Error(`timed out waiting for ${label}`)
 }
 
 for (const key of [
@@ -291,8 +332,7 @@ try {
 if (!deniedBash) throw new Error("bash from main repo was not denied")
 
 await hooks.event({ event: { type: "session.deleted", properties: { info: { id: sessionID } } } })
-if (fs.existsSync(sandbox)) throw new Error("empty auto sandbox was not cleaned up")
-if (fs.existsSync(marker)) throw new Error("empty auto marker was not cleaned up")
+await waitFor(() => !fs.existsSync(sandbox) && !fs.existsSync(marker), 10000, "empty auto sandbox cleanup")
 JS
   OUT=$(node "$NODE_AUTO_SCRIPT" "$ROOT/adapters/opencode/plugins/worktree-sandbox.js" "$REPO" 2>&1)
   ec=$?
@@ -357,6 +397,29 @@ if (polled.status().watcherActive) throw new Error("watcher started despite AISB
 execFileSync("git", ["-C", worktree, "switch", "-c", "poll-next"], { stdio: "ignore" })
 await waitFor(() => pollUpdates.some((item) => item.branch === "poll-next"), 5000, "polled branch switch")
 polled.close()
+
+let resolveSlowWorktree
+let slowWorktreeRequested = false
+const slowWorktree = new Promise((resolve) => {
+  resolveSlowWorktree = resolve
+})
+const closedUpdates = []
+const closing = core.createBranchObserver({
+  getWorktree() {
+    slowWorktreeRequested = true
+    return slowWorktree
+  },
+  debounceMs: 50,
+  onChange: (update) => closedUpdates.push(update),
+})
+const refreshPromise = closing.refresh("close-race")
+await waitFor(() => slowWorktreeRequested, 1000, "branch refresh entered async getWorktree")
+closing.close()
+resolveSlowWorktree(worktree)
+await refreshPromise
+await sleep(100)
+if (closedUpdates.length !== 0) throw new Error("closed branch observer emitted an update after async refresh")
+if (closing.status().watcherActive) throw new Error("closed branch observer created watcher after async refresh")
 JS
   OUT=$(node "$NODE_BRANCH_SCRIPT" "$ROOT/adapters/opencode/tui/worktree-sandbox-branch-core.js" "$WATCH_WT" 2>&1)
   ec=$?
@@ -510,6 +573,18 @@ if (!core.shouldRunTuiPlugin(parentPluginURL, { directory: path.dirname(worktree
 fs.rmSync(path.dirname(sandboxPluginPath), { recursive: true, force: true })
 if (!core.shouldRunTuiPlugin(parentPluginURL, { directory: worktree, env: sandboxEnv })) {
   throw new Error("parent TUI plugin should run when sandbox copy is absent")
+}
+if (!(await core.shouldRunTuiPluginAsync(parentPluginURL, { directory: worktree, env: sandboxEnv }))) {
+  throw new Error("async parent TUI plugin check should run when sandbox copy is absent")
+}
+if (!(await core.shouldRenderSandboxFilesAsync({
+  directory: path.dirname(worktree),
+  env: {
+    OPENCODE_SANDBOX_ACTIVE: "1",
+    OPENCODE_SANDBOX_WORKTREE: worktree,
+  },
+}))) {
+  throw new Error("async custom sandbox files sidebar should render outside sandbox worktree")
 }
 
 const pluginID = "internal:sidebar-files"
