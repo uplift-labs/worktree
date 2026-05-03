@@ -420,25 +420,6 @@ function isLikelySandboxWorktreePath(file, env) {
   return normalized.includes("/.uplift/sandbox/worktrees/") || normalized.includes("/.sandbox/worktrees/")
 }
 
-export function shouldRenderSandboxBranchBadge(input = {}) {
-  const env = input.env || process.env
-  const flag = envValue(env, "AISB_OPENCODE_BRANCH_BADGE")
-  if (flag === "0") return false
-  if (flag === "1") return true
-
-  const worktree = input.worktree ? path.resolve(input.worktree) : resolveSandboxWorktree({ ...input, env })
-  if (!worktree) return false
-
-  const directory = input.directory || input.worktreeHint || process.cwd()
-  if (!directory || !isWithinPath(directory, worktree)) return true
-
-  const visibleBranch = String(input.visibleBranch || "")
-  if (!visibleBranch) return true
-
-  const sandboxBranch = input.branch || readCurrentBranch(worktree)
-  return !!sandboxBranch && sandboxBranch !== visibleBranch
-}
-
 function inferCurrentSandboxWorktree(repo, env) {
   if (!repo) return ""
   const branch = readCurrentBranch(repo)

@@ -5,7 +5,6 @@ import {
   createBranchObserver,
   createChangedFilesObserver,
   resolveSandboxWorktree,
-  shouldRenderSandboxBranchBadge,
   shouldRenderSandboxFiles,
   shouldRunTuiPlugin,
   tuiPluginID,
@@ -17,7 +16,7 @@ const BRANCH_REFRESH_EVENTS = ["session.idle", "tool.execute.after", "file.watch
 const FILE_REFRESH_EVENTS = ["session.idle", "tool.execute.after", "file.watcher.updated", "session.diff"]
 
 function branchBadgeEnabled() {
-  return process.env.AISB_OPENCODE_BRANCH_BADGE !== "0"
+  return process.env.AISB_OPENCODE_BRANCH_BADGE === "1"
 }
 
 function hideBuiltinFilesEnabled() {
@@ -29,7 +28,7 @@ function eventSessionID(event) {
 }
 
 function BranchBadge(props) {
-  const [status, setStatus] = createSignal({ branch: "", worktree: "" })
+  const [branch, setBranch] = createSignal("")
   const api = props.api
   const observer = createBranchObserver({
     sessionID: props.sessionID,
@@ -41,7 +40,7 @@ function BranchBadge(props) {
       })
     },
     onChange(next) {
-      setStatus({ branch: next.branch, worktree: next.worktree })
+      setBranch(next.branch)
     },
     onError(error, phase) {
       if (process.env.AISB_OPENCODE_BRANCH_DEBUG !== "1") return
@@ -68,20 +67,9 @@ function BranchBadge(props) {
   })
 
   const text = () => {
-    const next = status()
-    if (!next.branch) return ""
-    if (!shouldRenderSandboxBranchBadge({
-      sessionID: props.sessionID,
-      directory: api.state.path.directory,
-      worktreeHint: api.state.path.worktree,
-      worktree: next.worktree,
-      branch: next.branch,
-      visibleBranch: api.state.vcs?.branch,
-    })) {
-      return ""
-    }
-    const label = process.env.AISB_OPENCODE_BRANCH_LABEL || "sandbox"
-    return `${label}:${next.branch}`
+    if (!branch()) return ""
+    const label = process.env.AISB_OPENCODE_BRANCH_LABEL || "branch"
+    return `${label}:${branch()}`
   }
 
   return (
