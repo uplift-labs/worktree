@@ -447,6 +447,43 @@ if (!core.shouldRunTuiPlugin(parentPluginURL, { directory: worktree, env: launch
   throw new Error("parent TUI plugin should run when sandbox copy is absent")
 }
 
+if (!core.shouldRenderSandboxBranchBadge({
+  directory: path.dirname(worktree),
+  worktree,
+  branch: "diff-start",
+  visibleBranch: "main",
+  env: launcherEnv,
+})) {
+  throw new Error("sandbox branch badge should render when OpenCode shows main")
+}
+if (core.shouldRenderSandboxBranchBadge({
+  directory: worktree,
+  worktree,
+  branch: "diff-start",
+  visibleBranch: "diff-start",
+  env: launcherEnv,
+})) {
+  throw new Error("sandbox branch badge should hide when built-in branch is already correct")
+}
+if (!core.shouldRenderSandboxBranchBadge({
+  directory: worktree,
+  worktree,
+  branch: "diff-start",
+  visibleBranch: "main",
+  env: launcherEnv,
+})) {
+  throw new Error("sandbox branch badge should render on branch mismatch")
+}
+if (core.shouldRenderSandboxBranchBadge({
+  directory: path.dirname(worktree),
+  worktree,
+  branch: "diff-start",
+  visibleBranch: "main",
+  env: { ...launcherEnv, AISB_OPENCODE_BRANCH_BADGE: "0" },
+})) {
+  throw new Error("AISB_OPENCODE_BRANCH_BADGE=0 should disable the sandbox branch badge")
+}
+
 const pluginID = "internal:sidebar-files"
 let pluginActive = true
 let pluginEnabled = true
