@@ -2,13 +2,14 @@
 # install.sh — install worktree-sandbox into a target git repo.
 #
 # Usage:
-#   bash install.sh [--target <repo-dir>] [--prefix <dir>] [--with-claude-code] [--with-codex] [--with-opencode] [--with-opencode-os-sandbox]
+#   bash install.sh [--target <repo-dir>] [--prefix <dir>] [--with-claude-code] [--with-codex] [--with-opencode] [--with-opencode-permissions] [--with-opencode-os-sandbox]
 #
 # By default installs only the core commands + a pre-merge-commit git hook that
 # runs sandbox-merge-gate. With --with-claude-code, also installs the Claude
 # Code adapter hooks and a settings-hooks.json snippet. With --with-codex,
 # installs Codex lifecycle hooks and a launcher. With --with-opencode,
-# installs the OpenCode project-local plugin. With
+# installs the OpenCode project-local plugin. With --with-opencode-permissions,
+# also adds conservative OpenCode permission defaults to opencode.json. With
 # --with-opencode-os-sandbox, also adds the opencode-sandbox npm plugin to
 # opencode.json. JSON hook/config merges require python3 on PATH.
 
@@ -20,6 +21,7 @@ PREFIX=".uplift"
 WITH_CC=0
 WITH_CODEX=0
 WITH_OPENCODE=0
+WITH_OPENCODE_PERMISSIONS=0
 WITH_OPENCODE_OS_SANDBOX=0
 
 while [ $# -gt 0 ]; do
@@ -29,6 +31,7 @@ while [ $# -gt 0 ]; do
     --with-claude-code) WITH_CC=1; shift ;;
     --with-codex)       WITH_CODEX=1; shift ;;
     --with-opencode)    WITH_OPENCODE=1; shift ;;
+    --with-opencode-permissions) WITH_OPENCODE_PERMISSIONS=1; shift ;;
     --with-opencode-os-sandbox) WITH_OPENCODE_OS_SANDBOX=1; shift ;;
     -h|--help)
       sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
@@ -39,6 +42,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ "$WITH_OPENCODE_OS_SANDBOX" -eq 1 ] && WITH_OPENCODE=1
+[ "$WITH_OPENCODE_PERMISSIONS" -eq 1 ] && WITH_OPENCODE=1
 
 [ -z "$TARGET" ] && TARGET="$(pwd)"
 git -C "$TARGET" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
@@ -248,10 +252,17 @@ INSTALLER="\$REPO_ROOT/install.sh"
 _cc_flag=""
 _codex_flag=""
 _opencode_flag=""
+_opencode_permissions_flag=""
 _opencode_os_flag=""
 [ -d "\$REPO_ROOT/$_ADAPTER_REL" ] && _cc_flag="--with-claude-code"
 [ -d "\$REPO_ROOT/$_CODEX_ADAPTER_REL" ] && _codex_flag="--with-codex"
 [ -d "\$REPO_ROOT/$_OPENCODE_ADAPTER_REL" ] && _opencode_flag="--with-opencode"
+if [ -d "\$REPO_ROOT/$_OPENCODE_ADAPTER_REL" ] && \
+   [ -f "\$REPO_ROOT/opencode.json" ] && \
+   grep -qF '"external_directory": "ask"' "\$REPO_ROOT/opencode.json" 2>/dev/null && \
+   grep -qF '"doom_loop": "ask"' "\$REPO_ROOT/opencode.json" 2>/dev/null; then
+  _opencode_permissions_flag="--with-opencode-permissions"
+fi
 if [ -d "\$REPO_ROOT/$_OPENCODE_ADAPTER_REL" ] && \
    [ -f "\$REPO_ROOT/opencode.json" ] && \
    grep -qF '"opencode-sandbox"' "\$REPO_ROOT/opencode.json" 2>/dev/null; then
@@ -259,7 +270,7 @@ if [ -d "\$REPO_ROOT/$_OPENCODE_ADAPTER_REL" ] && \
 fi
 
 # Run in background so merge returns instantly; suppress output unless error.
-( bash "\$INSTALLER" --target "\$REPO_ROOT" \$_cc_flag \$_codex_flag \$_opencode_flag \$_opencode_os_flag >/dev/null 2>&1 || \
+( bash "\$INSTALLER" --target "\$REPO_ROOT" \$_cc_flag \$_codex_flag \$_opencode_flag \$_opencode_permissions_flag \$_opencode_os_flag >/dev/null 2>&1 || \
   printf '[sandbox] post-merge: install.sh failed (exit %s)\n' "\$?" >&2 ) &
 exit 0
 HOOK_EOF
@@ -349,6 +360,89 @@ elif isinstance(plugins, str):
         config["plugin"] = [plugins, plugin_name]
 else:
     raise SystemExit(f"opencode config 'plugin' must be an array or string: {cfg_path}")
+
+cfg_path.parent.mkdir(parents=True, exist_ok=True)
+cfg_path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+PY
+  rc=$?
+  [ "$rc" -eq 0 ] || exit "$rc"
+}
+
+merge_opencode_permissions() {
+  local cfg="$1"
+  local rc
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf '[install] ERROR: python3 required to merge OpenCode permissions into %s.\n' "$cfg" >&2
+    exit 1
+  fi
+
+  python3 - "$cfg" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+cfg_path = Path(sys.argv[1])
+
+if cfg_path.exists():
+    config = json.loads(cfg_path.read_text(encoding="utf-8"))
+else:
+    config = {"$schema": "https://opencode.ai/config.json"}
+
+if not isinstance(config, dict):
+    raise SystemExit(f"opencode config must be a JSON object: {cfg_path}")
+
+permission = config.get("permission")
+if permission is None:
+    permission = {}
+    config["permission"] = permission
+elif not isinstance(permission, dict):
+    raise SystemExit(f"opencode config 'permission' must be an object: {cfg_path}")
+
+
+def set_absent(key, value):
+    if key not in permission:
+        permission[key] = value
+
+
+def merge_tool_rules(tool, defaults):
+    current = permission.get(tool)
+    if current is None:
+        permission[tool] = dict(defaults)
+        return
+    if isinstance(current, dict):
+        for pattern, decision in defaults.items():
+            current.setdefault(pattern, decision)
+
+
+def merge_read_rules():
+    defaults = {
+        "*.env": "deny",
+        "*.env.*": "deny",
+        "*.env.example": "allow",
+    }
+    current = permission.get("read")
+    if current is None:
+        permission["read"] = {"*": "allow", **defaults}
+        return
+    if isinstance(current, dict):
+        for pattern, decision in defaults.items():
+            current.setdefault(pattern, decision)
+
+
+set_absent("external_directory", "ask")
+set_absent("doom_loop", "ask")
+merge_read_rules()
+merge_tool_rules(
+    "bash",
+    {
+        "git reset --hard*": "deny",
+        "git push --force*": "deny",
+        "git push -f*": "deny",
+        "rm -rf *": "deny",
+        "rm -fr *": "deny",
+    },
+)
 
 cfg_path.parent.mkdir(parents=True, exist_ok=True)
 cfg_path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -492,6 +586,12 @@ if [ "$WITH_OPENCODE" -eq 1 ]; then
   printf '[install] adding OpenCode TUI branch plugin to %s\n' "$OPENCODE_TUI_CONFIG"
   merge_opencode_tui_plugin "$OPENCODE_TUI_CONFIG" "./tui-plugins/worktree-sandbox-branch.tsx"
 
+  if [ "$WITH_OPENCODE_PERMISSIONS" -eq 1 ]; then
+    OPENCODE_CONFIG="$TARGET/opencode.json"
+    printf '[install] adding conservative OpenCode permissions to %s\n' "$OPENCODE_CONFIG"
+    merge_opencode_permissions "$OPENCODE_CONFIG"
+  fi
+
   if [ "$WITH_OPENCODE_OS_SANDBOX" -eq 1 ]; then
     OPENCODE_CONFIG="$TARGET/opencode.json"
     printf '[install] adding opencode-sandbox plugin to %s\n' "$OPENCODE_CONFIG"
@@ -506,5 +606,6 @@ printf '  post-merge hook: %s\n' "$POST_MERGE"
 [ "$WITH_CC" -eq 1 ] && printf '  claude-code adapter: %s\n' "$INSTALL_ROOT/adapter"
 [ "$WITH_CODEX" -eq 1 ] && printf '  codex adapter: %s\n' "$INSTALL_ROOT/adapters/codex"
 [ "$WITH_OPENCODE" -eq 1 ] && printf '  opencode adapter: %s\n' "$INSTALL_ROOT/adapters/opencode"
+[ "$WITH_OPENCODE_PERMISSIONS" -eq 1 ] && printf '  opencode permissions: %s\n' "$TARGET/opencode.json"
 [ "$WITH_OPENCODE_OS_SANDBOX" -eq 1 ] && printf '  opencode OS sandbox plugin: %s\n' "$TARGET/opencode.json"
 exit 0

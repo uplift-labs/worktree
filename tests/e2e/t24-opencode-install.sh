@@ -48,6 +48,39 @@ assert_file_exists "managed project plugin still present" "$REPO/.opencode/plugi
 TUI_PLUGIN_COUNT=$(grep -o 'worktree-sandbox-branch.tsx' "$REPO/.opencode/tui.json" | wc -l | tr -d '[:space:]')
 assert_eq "managed TUI plugin not duplicated" "1" "$TUI_PLUGIN_COUNT"
 
+echo "== install --with-opencode-permissions merges permission defaults idempotently =="
+cat > "$REPO/opencode.json" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["existing-plugin"],
+  "permission": {
+    "bash": {
+      "git status*": "allow"
+    }
+  }
+}
+JSON
+OUT=$(bash "$ROOT/install.sh" --target "$REPO" --with-opencode-permissions 2>&1)
+ec=$?
+assert_exit "opencode permissions install exits 0" 0 "$ec"
+OPENCODE_JSON=$(cat "$REPO/opencode.json")
+assert_contains "existing opencode plugin preserved during permissions merge" '"existing-plugin"' "$OPENCODE_JSON"
+assert_contains "existing bash rule preserved" '"git status\*": "allow"' "$OPENCODE_JSON"
+assert_contains "external directory asks by default" '"external_directory": "ask"' "$OPENCODE_JSON"
+assert_contains "doom loop asks by default" '"doom_loop": "ask"' "$OPENCODE_JSON"
+assert_contains "env reads denied by default" '"*.env": "deny"' "$OPENCODE_JSON"
+assert_contains "env example remains allowed" '"*.env.example": "allow"' "$OPENCODE_JSON"
+assert_contains "dangerous reset denied" '"git reset --hard\*": "deny"' "$OPENCODE_JSON"
+assert_contains "install output mentions opencode permissions" "opencode permissions" "$OUT"
+
+OUT=$(bash "$ROOT/install.sh" --target "$REPO" --with-opencode-permissions 2>&1)
+ec=$?
+assert_exit "opencode permissions reinstall exits 0" 0 "$ec"
+RESET_RULE_COUNT=$(grep -oF '"git reset --hard*"' "$REPO/opencode.json" | wc -l | tr -d '[:space:]')
+assert_eq "opencode permission rule not duplicated" "1" "$RESET_RULE_COUNT"
+GIT_COMMON=$(git -C "$REPO" rev-parse --git-common-dir)
+assert_contains "post-merge detects opencode permissions" "--with-opencode-permissions" "$(cat "$REPO/$GIT_COMMON/hooks/post-merge")"
+
 echo "== install --with-opencode-os-sandbox merges npm plugin idempotently =="
 cat > "$REPO/opencode.json" <<'JSON'
 {

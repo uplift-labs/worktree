@@ -125,6 +125,11 @@ if [ "$_can_commit" = 1 ] \
   sb_cleanup_log "$ROOT" "RELEASE" "$SESSION" "$BRANCH" "cleanup-phase2-self-release"
 fi
 
+# If Phase 2 did not release the marker, keep it fresh before invoking
+# lifecycle. SessionEnd just killed the heartbeat, and slow hosts can otherwise
+# let lifecycle's short default TTL reclaim this still-protected session.
+[ -f "$MARKER" ] && touch "$MARKER" 2>/dev/null || true
+
 # --- Phase 3: lifecycle reap -----------------------------------------------
 #
 # Runs after self-release so that, when the marker has just been dropped,

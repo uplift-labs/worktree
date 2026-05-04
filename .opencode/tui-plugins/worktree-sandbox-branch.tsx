@@ -12,8 +12,23 @@ import {
 
 const MODULE_URL = import.meta.url
 
-const BRANCH_REFRESH_EVENTS = ["session.idle", "tool.execute.after", "file.watcher.updated"]
-const FILE_REFRESH_EVENTS = ["session.idle", "tool.execute.after", "file.watcher.updated", "session.diff"]
+export const BRANCH_REFRESH_EVENTS = [
+  "session.idle",
+  "session.status",
+  "vcs.branch.updated",
+  "file.watcher.updated",
+  "session.next.shell.ended",
+]
+export const FILE_REFRESH_EVENTS = [
+  "session.idle",
+  "session.status",
+  "file.edited",
+  "file.watcher.updated",
+  "session.diff",
+  "session.next.tool.success",
+  "session.next.tool.failed",
+  "session.next.shell.ended",
+]
 
 function branchBadgeEnabled() {
   return process.env.AISB_OPENCODE_BRANCH_BADGE === "1"

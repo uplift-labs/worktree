@@ -22,6 +22,17 @@ if grep -Eq 'resolveSandboxWorktree\(|shouldRenderSandboxFiles\(' "$ROOT/adapter
 else
   assert_exit "OpenCode TUI render path uses async sandbox resolution" 0 0
 fi
+if grep -q 'tool.execute.after' "$ROOT/adapters/opencode/tui/worktree-sandbox-branch.tsx" 2>/dev/null; then
+  assert_exit "OpenCode TUI subscribes only to bus events" 0 1
+else
+  assert_exit "OpenCode TUI subscribes only to bus events" 0 0
+fi
+if grep -q 'session.next.tool.success' "$ROOT/adapters/opencode/tui/worktree-sandbox-branch.tsx" 2>/dev/null && \
+   grep -q 'file.edited' "$ROOT/adapters/opencode/tui/worktree-sandbox-branch.tsx" 2>/dev/null; then
+  assert_exit "OpenCode TUI includes documented refresh events" 0 0
+else
+  assert_exit "OpenCode TUI includes documented refresh events" 0 1
+fi
 
 if command -v node >/dev/null 2>&1; then
   NODE_ASYNC_SCRIPT="$FIXTURE_ROOT/opencode-plugin-async-smoke.mjs"
@@ -119,7 +130,13 @@ for (const key of [
 process.env.OPENCODE_SANDBOX_ROOT = fakeRoot
 
 const mod = await import(pathToFileURL(pluginPath).href)
-const hooks = await mod.WorktreeSandbox({ directory: repo, worktree: repo })
+if (!mod.default || mod.default.id !== "uplift.worktree-sandbox" || typeof mod.default.server !== "function") {
+  throw new Error("default export is not a stable OpenCode plugin object")
+}
+if (typeof mod.WorktreeSandbox !== "function") throw new Error("named WorktreeSandbox export missing")
+const logs = []
+const client = { app: { async log(request) { logs.push(request.body) } } }
+const hooks = await mod.default.server({ directory: repo, worktree: repo, client })
 
 let started = Date.now()
 await hooks.event({ event: { type: "session.created", properties: { sessionID } } })
@@ -152,6 +169,9 @@ if (posix(secondWrite.args.filePath) !== posix(path.join(sandbox, "second.txt"))
 const initCount = fs.readFileSync(path.join(repo, ".git", "sandbox-init-count"), "utf8").trim().split(/\n/).filter(Boolean).length
 if (initCount !== 1) throw new Error(`async bootstrap was not single-flight: ${initCount}`)
 if (!fs.existsSync(marker)) throw new Error("async sandbox marker missing after tool wait")
+if (!logs.some((item) => item.service === "worktree-sandbox" && item.message === "sandbox ready" && posix(item.extra?.worktree) === posix(sandbox))) {
+  throw new Error("structured sandbox ready log missing")
+}
 
 const shell = { env: {} }
 await hooks["shell.env"]({ sessionID, cwd: repo }, shell)
@@ -210,7 +230,9 @@ for (const key of [
 process.env.OPENCODE_SANDBOX_ROOT = fakeRoot
 
 const mod = await import(pathToFileURL(pluginPath).href)
-const hooks = await mod.WorktreeSandbox({ directory: repo, worktree: repo })
+const logs = []
+const client = { app: { async log(request) { logs.push(request.body) } } }
+const hooks = await mod.WorktreeSandbox({ directory: repo, worktree: repo, client })
 let denied = false
 try {
   await hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "fail-write" }, { args: { filePath: "should-not-write.txt" } })
@@ -218,6 +240,9 @@ try {
   denied = String(error.message).includes("init exploded")
 }
 if (!denied) throw new Error("write-capable tool did not fail closed after sandbox init failure")
+if (!logs.some((item) => item.service === "worktree-sandbox" && item.message === "sandbox bootstrap failed" && /init exploded/.test(item.extra?.warning || ""))) {
+  throw new Error("structured bootstrap failure log missing")
+}
 JS
   OUT=$(node "$NODE_FAIL_SCRIPT" "$ROOT/adapters/opencode/plugins/worktree-sandbox.js" "$REPO" "$FIXTURE_ROOT/fake-opencode-fail-core" 2>&1)
   ec=$?
@@ -266,7 +291,9 @@ for (const key of [
 }
 
 const mod = await import(pathToFileURL(pluginPath).href)
-const hooks = await mod.WorktreeSandbox({ directory: repo, worktree: repo })
+const logs = []
+const client = { app: { async log(request) { logs.push(request.body) } } }
+const hooks = await mod.WorktreeSandbox({ directory: repo, worktree: repo, client })
 
 await hooks.event({ event: { type: "session.created", properties: { sessionID } } })
 
@@ -301,6 +328,9 @@ try {
   deniedWrite = String(error.message).includes("sandbox-guard")
 }
 if (!deniedWrite) throw new Error("absolute write to main repo was not denied")
+if (!logs.some((item) => item.message === "blocked main repo target" && item.extra?.tool === "write")) {
+  throw new Error("structured path block log missing")
+}
 
 const grep = { args: { pattern: "README" } }
 await hooks["tool.execute.before"]({ tool: "grep", sessionID, callID: "grep" }, grep)
@@ -330,6 +360,9 @@ try {
   deniedBash = String(error.message).includes("sandbox-guard")
 }
 if (!deniedBash) throw new Error("bash from main repo was not denied")
+if (!logs.some((item) => item.message === "blocked main repo target" && item.extra?.tool === "bash" && item.extra?.callID === "bash-main")) {
+  throw new Error("structured bash block log missing")
+}
 
 await hooks.event({ event: { type: "session.deleted", properties: { info: { id: sessionID } } } })
 await waitFor(() => !fs.existsSync(sandbox) && !fs.existsSync(marker), 10000, "empty auto sandbox cleanup")

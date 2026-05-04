@@ -4,6 +4,9 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
+export const WORKTREE_SANDBOX_PLUGIN_ID = "uplift.worktree-sandbox"
+
+const LOG_SERVICE = "worktree-sandbox"
 
 const state = {
   sessions: new Map(),
@@ -39,6 +42,26 @@ function commandOutput(value) {
   if (!value) return ""
   if (Buffer.isBuffer(value)) return value.toString("utf8")
   return String(value)
+}
+
+async function logOpenCode(client, level, message, extra = {}) {
+  if (!client?.app?.log) return
+  try {
+    await client.app.log({
+      body: {
+        service: LOG_SERVICE,
+        level,
+        message,
+        extra,
+      },
+    })
+  } catch {
+    // Diagnostics must never affect guard decisions or OpenCode startup.
+  }
+}
+
+function loggerFor(client) {
+  return (level, message, extra = {}) => logOpenCode(client, level, message, extra)
 }
 
 function parsePositiveInt(value, fallback) {
@@ -337,12 +360,19 @@ function cleanupArgs(cfg) {
   ]
 }
 
-async function cleanupConfigAsync(cfg) {
+async function cleanupConfigAsync(cfg, log = null) {
   if (!cfg.active || !cfg.auto) return
   await killHeartbeatAsync(cfg)
   try {
     await execSandboxAsync(cfg.root, "core/cmd/sandbox-cleanup.sh", cleanupArgs(cfg))
-  } catch {
+  } catch (error) {
+    if (typeof log === "function") {
+      await log("warn", "sandbox cleanup failed", {
+        session: cfg.session,
+        worktree: cfg.worktree,
+        warning: warningFromError(error, "sandbox cleanup failed"),
+      })
+    }
     // Fail open. Stale markers are still TTL-managed by sandbox-lifecycle.
   }
 }
@@ -520,9 +550,26 @@ async function createSessionConfigAsync(ctx, entry) {
       entry.status = entry.cancelled ? "cancelled" : "failed"
       entry.cfg = emptyConfig()
       if (entry.cancelled) state.bootstraps.delete(ctx.session)
-      if (!entry.cancelled) state.warnings.set(ctx.session, warning || "sandbox creation failed")
+      if (!entry.cancelled) {
+        state.warnings.set(ctx.session, warning || "sandbox creation failed")
+        if (entry.log) {
+          await entry.log("error", "sandbox bootstrap failed", {
+            session: ctx.session,
+            repo: ctx.repo,
+            warning: warning || "sandbox creation failed",
+          })
+        }
+      }
       return entry.cfg
     }
+  }
+
+  if (firstWarning && entry.log) {
+    await entry.log("warn", "sandbox init recovered after lifecycle retry", {
+      session: ctx.session,
+      repo: ctx.repo,
+      warning: firstWarning,
+    })
   }
 
   if (!worktree) {
@@ -546,7 +593,13 @@ async function createSessionConfigAsync(ctx, entry) {
   }
 
   if (entry.cancelled) {
-    await cleanupConfigAsync(cfg)
+    if (entry.log) {
+      await entry.log("info", "sandbox bootstrap cancelled", {
+        session: cfg.session,
+        worktree: cfg.worktree,
+      })
+    }
+    await cleanupConfigAsync(cfg, entry.log)
     entry.status = "cancelled"
     entry.cfg = emptyConfig()
     state.bootstraps.delete(ctx.session)
@@ -564,6 +617,14 @@ async function createSessionConfigAsync(ctx, entry) {
   })
   registerProcessCleanup()
 
+  if (entry.log) {
+    await entry.log("info", "sandbox ready", {
+      session: cfg.session,
+      repo: cfg.repo,
+      worktree: cfg.worktree,
+    })
+  }
+
   void runSandboxLifecycle(ctx).catch(() => {
     // Post-ready cleanup is best-effort and must not affect the active session.
   })
@@ -575,7 +636,11 @@ function failBootstrap(entry, session, error) {
   entry.status = entry.cancelled ? "cancelled" : "failed"
   entry.cfg = emptyConfig()
   if (entry.cancelled) state.bootstraps.delete(session)
-  if (!entry.cancelled) state.warnings.set(session, warningFromError(error, "sandbox creation failed"))
+  if (!entry.cancelled) {
+    const warning = warningFromError(error, "sandbox creation failed")
+    state.warnings.set(session, warning)
+    if (entry.log) void entry.log("error", "sandbox bootstrap failed", { session, warning })
+  }
   return entry.cfg
 }
 
@@ -635,7 +700,7 @@ function readyBootstrap(cfg) {
   }
 }
 
-function bootstrapFor(sessionID, baseDirectory) {
+function bootstrapFor(sessionID, baseDirectory, log = null) {
   const raw = sessionID || state.currentSession
   if (!raw || envValue("OPENCODE_SANDBOX_AUTO") === "0") return inactiveBootstrap()
 
@@ -655,6 +720,7 @@ function bootstrapFor(sessionID, baseDirectory) {
     contextPromise: null,
     initPromise: null,
     promise: null,
+    log,
   }
   state.bootstraps.set(session, entry)
   state.currentSession = session
@@ -667,8 +733,8 @@ function readyConfigFor(sessionID) {
   return state.sessions.get(sandboxSessionID(raw)) || emptyConfig()
 }
 
-async function configForTool(sessionID, baseDirectory) {
-  const entry = bootstrapFor(sessionID, baseDirectory)
+async function configForTool(sessionID, baseDirectory, log = null) {
+  const entry = bootstrapFor(sessionID, baseDirectory, log)
   if (entry.status === "ready") return entry.cfg
   if (entry.status === "inactive" || !entry.enforce) return emptyConfig()
 
@@ -747,6 +813,23 @@ function guardPath(cfg, file) {
   }
 }
 
+async function enforcePathGuard(cfg, file, log, extra = {}) {
+  try {
+    guardPath(cfg, file)
+  } catch (error) {
+    if (typeof log === "function") {
+      await log("warn", "blocked main repo target", {
+        session: cfg.session,
+        repo: cfg.repo,
+        worktree: cfg.worktree,
+        target: absolutize(file, cfg.worktree || cfg.repo),
+        ...extra,
+      })
+    }
+    throw error
+  }
+}
+
 function commandMentionsMainRepo(cfg, command) {
   const normalized = toPosix(String(command || "")).toLowerCase()
   const repo = toPosix(cfg.repo).toLowerCase()
@@ -778,8 +861,9 @@ function sandboxToolDefinition(output) {
   output.description = `${output.description}\n\n${note}`
 }
 
-export const WorktreeSandbox = async ({ directory, worktree }) => {
+export const WorktreeSandbox = async ({ directory, worktree, client } = {}) => {
   const baseDirectory = directory || worktree || process.cwd()
+  const log = loggerFor(client)
 
   return {
     event: async ({ event }) => {
@@ -787,12 +871,12 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
       if (!id) return
 
       if (event.type === "session.created" || event.type === "session.updated") {
-        bootstrapFor(id, baseDirectory)
+        bootstrapFor(id, baseDirectory, log)
         return
       }
 
       if (event.type === "session.idle" || event.type === "session.status") {
-        const entry = bootstrapFor(id, baseDirectory)
+        const entry = bootstrapFor(id, baseDirectory, log)
         const cfg = entry.status === "ready" ? entry.cfg : readyConfigFor(id)
         if (cfg.active) void touchMarkerAsync(cfg)
         return
@@ -806,7 +890,13 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
           if (entry.status !== "pending" && entry.status !== "preparing") state.bootstraps.delete(session)
         }
         const cfg = state.sessions.get(session)
-        if (cfg) void cleanupConfigAsync(cfg)
+        if (cfg) {
+          void log("info", "sandbox cleanup scheduled", {
+            session: cfg.session,
+            worktree: cfg.worktree,
+          })
+          void cleanupConfigAsync(cfg, log)
+        }
         state.sessions.delete(session)
         state.warnings.delete(session)
         if (state.currentSession === session) state.currentSession = ""
@@ -814,7 +904,7 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
     },
 
     "experimental.chat.system.transform": async (input, output) => {
-      const entry = bootstrapFor(input?.sessionID, baseDirectory)
+      const entry = bootstrapFor(input?.sessionID, baseDirectory, log)
       const cfg = entry.status === "ready" ? entry.cfg : readyConfigFor(input?.sessionID)
       const warning = warningFor(input?.sessionID)
       if (!output || !Array.isArray(output.system)) return
@@ -844,14 +934,14 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
 
     "shell.env": async (input, output) => {
       if (!output || !output.env) return
-      const cfg = await configForTool(input?.sessionID, baseDirectory)
+      const cfg = await configForTool(input?.sessionID, baseDirectory, log)
       if (!cfg.active) return
       injectShellEnv(cfg, output)
     },
 
     "tool.execute.before": async (input, output) => {
       if (!input || !output || !SANDBOXED_TOOLS.has(input.tool)) return
-      const cfg = await configForTool(input?.sessionID, baseDirectory)
+      const cfg = await configForTool(input?.sessionID, baseDirectory, log)
       if (!cfg.active) return
 
       const args = output.args || {}
@@ -860,13 +950,13 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
 
       if (PATH_TOOLS.has(tool) && args.filePath) {
         args.filePath = mapImplicitPathToSandbox(cfg, args.filePath, cwd)
-        guardPath(cfg, args.filePath)
+        await enforcePathGuard(cfg, args.filePath, log, { tool, callID: input.callID })
         return
       }
 
       if (SEARCH_TOOLS.has(tool)) {
         args.path = args.path ? mapImplicitPathToSandbox(cfg, args.path, baseDirectory) : cfg.worktree
-        guardPath(cfg, args.path)
+        await enforcePathGuard(cfg, args.path, log, { tool, callID: input.callID })
         return
       }
 
@@ -874,10 +964,13 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
         args.patchText = rewritePatch(cfg, args.patchText, baseDirectory)
         const targets = patchTargets(args.patchText, baseDirectory)
         if (targets.length === 0) {
-          guardPath(cfg, path.join(cfg.worktree, ".__opencode_apply_patch_target__"))
+          await enforcePathGuard(cfg, path.join(cfg.worktree, ".__opencode_apply_patch_target__"), log, {
+            tool,
+            callID: input.callID,
+          })
           return
         }
-        for (const target of targets) guardPath(cfg, target)
+        for (const target of targets) await enforcePathGuard(cfg, target, log, { tool, callID: input.callID })
         return
       }
 
@@ -885,14 +978,24 @@ export const WorktreeSandbox = async ({ directory, worktree }) => {
         const nextCwd = args.workdir ? mapImplicitPathToSandbox(cfg, args.workdir, baseDirectory) : cfg.worktree
         args.workdir = nextCwd
         if (commandMentionsMainRepo(cfg, args.command)) {
+          await log("warn", "blocked bash command mentioning main repo", {
+            session: cfg.session,
+            repo: cfg.repo,
+            worktree: cfg.worktree,
+            callID: input.callID,
+            command: String(args.command || ""),
+          })
           throw new Error(
             `sandbox-guard: bash command mentions the main repo (${cfg.repo}). Run it from the sandbox instead: ${cfg.worktree}`,
           )
         }
-        guardPath(cfg, path.join(nextCwd, ".__opencode_bash_target__"))
+        await enforcePathGuard(cfg, path.join(nextCwd, ".__opencode_bash_target__"), log, { tool, callID: input.callID })
       }
     },
   }
 }
 
-export default WorktreeSandbox
+export default {
+  id: WORKTREE_SANDBOX_PLUGIN_ID,
+  server: WorktreeSandbox,
+}

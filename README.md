@@ -28,6 +28,13 @@ bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/
 opencode
 ```
 
+Or add conservative native OpenCode permission defaults as well:
+
+```bash
+bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh) --with-opencode-permissions
+opencode
+```
+
 Or add OS-level sandboxing for OpenCode `bash` commands on macOS/Linux:
 
 ```bash
@@ -152,7 +159,7 @@ bash worktree-sandbox/install.sh --with-opencode
 bash worktree-sandbox/install.sh --with-opencode-os-sandbox
 ```
 
-Installs `core/` to `.uplift/sandbox/core/`, wires `pre-merge-commit` + `post-merge` git hooks, and ignores only `.uplift/sandbox/worktrees/`. With `--with-claude-code`, the adapter goes to `.uplift/sandbox/adapter/` and its hook config is merged into `.claude/settings.json` (requires `python3`). With `--with-codex`, the adapter goes to `.uplift/sandbox/adapters/codex/`, hooks are merged into `.codex/hooks.json`, and `features.codex_hooks = true` is enabled in `.codex/config.toml`. With `--with-opencode`, the adapter goes to `.uplift/sandbox/adapters/opencode/`, project-local plugins are written to `.opencode/plugins/` and `.opencode/tui-plugins/`, and normal `opencode` launches create sandbox sessions through plugin hooks. With `--with-opencode-os-sandbox`, `--with-opencode` is implied and the external `opencode-sandbox` npm plugin is added to `opencode.json` (requires `python3`).
+Installs `core/` to `.uplift/sandbox/core/`, wires `pre-merge-commit` + `post-merge` git hooks, and ignores only `.uplift/sandbox/worktrees/`. With `--with-claude-code`, the adapter goes to `.uplift/sandbox/adapter/` and its hook config is merged into `.claude/settings.json` (requires `python3`). With `--with-codex`, the adapter goes to `.uplift/sandbox/adapters/codex/`, hooks are merged into `.codex/hooks.json`, and `features.codex_hooks = true` is enabled in `.codex/config.toml`. With `--with-opencode`, the adapter goes to `.uplift/sandbox/adapters/opencode/`, project-local plugins are written to `.opencode/plugins/` and `.opencode/tui-plugins/`, and normal `opencode` launches create sandbox sessions through plugin hooks. With `--with-opencode-permissions`, `--with-opencode` is implied and conservative native OpenCode permission defaults are merged into `opencode.json` (requires `python3`). With `--with-opencode-os-sandbox`, `--with-opencode` is implied and the external `opencode-sandbox` npm plugin is added to `opencode.json` (requires `python3`).
 
 Re-running is safe (idempotent). The `post-merge` hook auto-syncs `.uplift/sandbox/` on every merge and preserves installed adapter flags.
 
@@ -205,11 +212,17 @@ The OpenCode adapter (`adapters/opencode/`) is plugin-first:
 
 After `--with-opencode`, run `opencode` as usual. OpenCode does not expose a pre-bootstrap hook that mutates its internal project root, so the plugin virtualizes supported tool paths into the sandbox. Sandbox detection and creation run asynchronously so the first prompt can move into the chat workspace promptly; the first supported tool call waits for the sandbox before touching files. OpenCode's own footer/status may still show the original repo and branch; trust `OPENCODE_SANDBOX_WORKTREE`, tool working dirs, or `git status` run by the tool for the active sandbox state.
 
+The OpenCode server plugin uses the current default plugin object shape with id `uplift.worktree-sandbox`, plus a named `WorktreeSandbox` export for smoke tests and compatibility. It logs meaningful bootstrap, block, and cleanup diagnostics through OpenCode's structured `client.app.log()` API when available; logging failures are ignored and never affect guard decisions.
+
 The TUI plugin resolves the session sandbox worktree from `OPENCODE_SANDBOX_WORKTREE` or the session marker asynchronously, then watches the resolved worktree git `HEAD` path. `git switch` normally updates immediately through the file watcher; polling remains as a fallback for missed branch events. The sidebar file list reads committed changes on the current sandbox branch relative to its merge-base with `main`/`master`, plus staged, unstaged, and untracked files in the sandbox worktree. This keeps unrelated main-repo changes out of the sidebar, even when main has moved or been merged into the sandbox branch. File refreshes are debounced and use asynchronous git commands with a timeout so OpenCode's UI thread is not blocked after edits. Tune fallback polling with `AISB_OPENCODE_BRANCH_REFRESH_MS` (default `5000` ms while the watcher is active, `1000` ms without it), `AISB_OPENCODE_FILES_REFRESH_MS` (default `2000` ms; set `0` to disable), and `AISB_OPENCODE_GIT_TIMEOUT_MS` (default `3000`). Enable the old prompt branch badge with `AISB_OPENCODE_BRANCH_BADGE=1`, disable branch watching with `AISB_OPENCODE_BRANCH_WATCH=0`, and enable debug logs with `AISB_OPENCODE_BRANCH_DEBUG=1` or `AISB_OPENCODE_FILES_DEBUG=1`.
 
 The built-in OpenCode `Modified Files` sidebar reads OpenCode's original project root. To avoid mutating OpenCode's internal plugin state during normal UI rendering, the TUI plugin no longer deactivates `internal:sidebar-files` by default. Set `AISB_OPENCODE_HIDE_BUILTIN_FILES=1` to restore the old behavior.
 
+Optional native permission hardening is available with `--with-opencode-permissions`. It preserves existing user rules and only adds missing defaults: `external_directory` and `doom_loop` ask, `.env` reads are denied while `.env.example` remains allowed, and obviously destructive `bash` patterns such as `git reset --hard*`, force pushes, and `rm -rf *` are denied. This is intentionally opt-in because worktree routing already protects supported tools and some teams prefer less permission friction.
+
 Optional OS-level sandboxing is available with `--with-opencode-os-sandbox`. This does not replace worktree isolation; it adds the community `opencode-sandbox` npm plugin so OpenCode `bash` tool calls are wrapped by `@anthropic-ai/sandbox-runtime`. On macOS this uses Seatbelt / `sandbox-exec`; on Linux it uses `bubblewrap` plus runtime helpers; on Windows it is unsupported and commands pass through unsandboxed.
+
+OpenCode compatibility checklist: do not run with `OPENCODE_PURE=1` when verifying the adapter because pure mode skips project plugins; re-run `bash tests/run.sh tests/e2e/t23-opencode-adapter-smoke.sh` after OpenCode upgrades; recheck server hooks `event`, `tool.execute.before`, `shell.env`, `tool.definition`, and `experimental.chat.system.transform`; recheck TUI event names such as `session.status`, `file.edited`, `vcs.branch.updated`, and `session.next.*` if OpenCode changes its event bus.
 
 ### Git hooks
 

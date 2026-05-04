@@ -135,7 +135,9 @@ sandbox-cleanup.sh --repo <dir> --session <id> [--worktrees-dir <rel>] [--branch
 
 **Phases:** capture-commit pending work (skipped if merge/rebase in progress
 or HEAD is detached) → self-release marker if branch is merged into main AND
-worktree is clean → invoke `sandbox-lifecycle` for full cleanup pass.
+worktree is clean → refresh any surviving marker so lifecycle's short default
+TTL does not reclaim the current unmerged session immediately after heartbeat
+shutdown → invoke `sandbox-lifecycle` for full cleanup pass.
 
 **Callers:** adapter session-end/launcher cleanup paths and `heartbeat.sh`
 (parent-death cleanup when a host-specific end hook never fired).
@@ -207,7 +209,8 @@ OpenCode support is plugin-first:
 | Component | Role |
 |-----------|------|
 | OpenCode plugin | Loads from `.opencode/plugins/`, schedules sandbox detection/creation on `session.created` or the first session-aware hook without blocking the first LLM request, injects checking/pending/active system context, waits for sandbox readiness before supported tool execution, propagates sandbox env vars via `shell.env`, maps supported built-in tool paths into the session sandbox, blocks explicit main-repo write targets in-process, refreshes markers asynchronously on idle/status events, and schedules `sandbox-cleanup.sh --trust-dead` asynchronously on `session.deleted` or detached on process exit. This is the normal `opencode` enforcement path. |
-| OpenCode TUI plugin | Loads from `.opencode/tui.json`, renders a right-sidebar `Sandbox Modified Files` list from the sandbox git diff against the current branch's merge-base with main/master, refreshes branch metadata immediately from git `HEAD` filesystem events when available, keeps `AISB_OPENCODE_BRANCH_REFRESH_MS` polling as branch fallback, polls sandbox file changes every `2000` ms by default with `AISB_OPENCODE_FILES_REFRESH_MS=0` as the opt-out, and uses async git/filesystem refreshes with `AISB_OPENCODE_GIT_TIMEOUT_MS` to avoid blocking the OpenCode UI. The prompt branch badge is disabled by default; `AISB_OPENCODE_BRANCH_BADGE=1` restores it. The built-in `internal:sidebar-files` deactivation is disabled by default; `AISB_OPENCODE_HIDE_BUILTIN_FILES=1` restores it. |
+| OpenCode TUI plugin | Loads from `.opencode/tui.json`, renders a right-sidebar `Sandbox Modified Files` list from the sandbox git diff against the current branch's merge-base with main/master, refreshes branch metadata immediately from git `HEAD` filesystem events when available, subscribes only to OpenCode bus events such as `session.status`, `file.edited`, `vcs.branch.updated`, and `session.next.*`, keeps `AISB_OPENCODE_BRANCH_REFRESH_MS` polling as branch fallback, polls sandbox file changes every `2000` ms by default with `AISB_OPENCODE_FILES_REFRESH_MS=0` as the opt-out, and uses async git/filesystem refreshes with `AISB_OPENCODE_GIT_TIMEOUT_MS` to avoid blocking the OpenCode UI. The prompt branch badge is disabled by default; `AISB_OPENCODE_BRANCH_BADGE=1` restores it. The built-in `internal:sidebar-files` deactivation is disabled by default; `AISB_OPENCODE_HIDE_BUILTIN_FILES=1` restores it. |
+| `--with-opencode-permissions` install option | Implies `--with-opencode` and idempotently merges conservative native OpenCode permission defaults into root `opencode.json` without overwriting existing user rules. Defaults ask for `external_directory` and `doom_loop`, deny `.env` reads except `.env.example`, and deny obviously destructive `bash` patterns such as hard resets, force pushes, and `rm -rf *`. |
 | `--with-opencode-os-sandbox` install option | Implies `--with-opencode` and adds the external `opencode-sandbox` npm plugin to root `opencode.json`. |
 
 OpenCode does not expose a pre-bootstrap hook that mutates its already-created
@@ -220,6 +223,19 @@ may continue to display the original repo/branch even while tool calls are
 mapped into the sandbox; the TUI plugin provides sandbox-specific changed-file
 sidebar state. Any `internal:sidebar-files` deactivation is opt-in runtime-only
 behavior and must not persist a disabled plugin setting.
+
+The installed server plugin default export is the stable object shape
+`{ id: "uplift.worktree-sandbox", server: WorktreeSandbox }`. The named
+`WorktreeSandbox` export remains available for smoke tests and compatibility.
+The plugin may emit structured OpenCode app logs for sandbox readiness,
+bootstrap failures, blocked main-repo targets, bash main-repo references, and
+cleanup failures. These logs are diagnostic only; failures to log are ignored.
+
+OpenCode compatibility checks belong in the adapter smoke test whenever OpenCode
+is upgraded: verify `event`, `tool.execute.before`, `shell.env`,
+`tool.definition`, `experimental.chat.system.transform`, TUI event names, and
+local project plugin loading. `OPENCODE_PURE=1` skips project plugins and is not
+a valid adapter verification mode.
 
 The OS sandbox option is adapter configuration only. It wraps OpenCode `bash`
 tool calls through `@anthropic-ai/sandbox-runtime` on supported platforms

@@ -57,12 +57,18 @@ printf '%s' "$CLEAR_IN" | CLAUDE_PROJECT_DIR="$REPO" bash "$END_HOOK" >/dev/null
 assert_eq "no commit created on clear" "$TIP_BEFORE" "$(git -C "$SB_PATH" rev-parse HEAD)"
 assert_dir_exists "sandbox preserved on clear" "$SB_PATH"
 assert_file_absent "main untouched on clear" "$REPO/feature.txt"
+ORIGINAL_MARKER_CONTENT=$(cat "$MARKER" 2>/dev/null || true)
 
 echo "== SessionEnd reason=clear on empty session self-reaps =="
 # /clear creates a new session_id — the old session is dead. If no work was
 # done, cleanup should self-release the marker and lifecycle should reap the
 # worktree in the same pass. Regression test for the bug where /clear left
 # orphan worktrees that accumulated with each /clear cycle.
+# This test continues exercising the original session after the independent
+# clear-empty case. Preserve and refresh its marker around that unrelated
+# lifecycle so the intentionally short default TTL on slow hosts does not make
+# the later original-session assertions depend on wall-clock speed.
+touch "$MARKER" 2>/dev/null || true
 CLR_SESSION="t09-clear-empty"
 CLR_START_IN=$(printf '{"session_id":"%s","source":"startup"}' "$CLR_SESSION")
 printf '%s' "$CLR_START_IN" | CLAUDE_PROJECT_DIR="$REPO" bash "$ROOT/adapters/claude-code/hooks/session-start.sh" >/dev/null 2>&1
@@ -74,6 +80,11 @@ CLR_END_IN=$(printf '{"session_id":"%s","reason":"clear"}' "$CLR_SESSION")
 printf '%s' "$CLR_END_IN" | CLAUDE_PROJECT_DIR="$REPO" bash "$END_HOOK" >/dev/null 2>&1
 assert_file_absent "clear-empty marker reaped" "$CLR_MARKER"
 assert_dir_absent "clear-empty sandbox reaped" "$CLR_SB"
+if [ -n "$ORIGINAL_MARKER_CONTENT" ]; then
+  mkdir -p "$(dirname "$MARKER")"
+  printf '%s\n' "$ORIGINAL_MARKER_CONTENT" > "$MARKER"
+fi
+touch "$MARKER" 2>/dev/null || true
 
 echo "== SessionEnd reason=compact is heartbeat-only =="
 COMPACT_IN=$(printf '{"session_id":"%s","reason":"compact"}' "$SESSION")
