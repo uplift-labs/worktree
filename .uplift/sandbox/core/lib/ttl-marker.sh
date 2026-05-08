@@ -13,6 +13,8 @@
 # PID (<marker>.hb) before applying TTL — a live heartbeat overrides staleness.
 #
 # Public functions:
+#   sb_marker_safe_id <session-id>                echo safe marker filename
+#   sb_marker_path <git-common-dir> <session-id>  echo marker path
 #   sb_marker_write <path> <value> [<initial_head>]
 #                                                write "<value> <epoch> [<head>]"
 #   sb_marker_read_value <path>                  echo first whitespace field
@@ -21,6 +23,34 @@
 #   sb_marker_touch <path>                       heartbeat: refresh mtime
 #   sb_marker_is_fresh <path> <ttl-seconds>      exit 0 = fresh, 1 = stale/missing
 #   sb_marker_prune_stale <glob> <ttl-seconds>   delete stale files matching glob
+
+sb_marker_safe_id() {
+  local value="$1"
+  printf '%s' "$value" | tr -c 'a-zA-Z0-9-' '-'
+}
+
+sb_marker_path() {
+  local common="$1" session="$2" safe safe_path legacy_path
+  safe=$(sb_marker_safe_id "$session")
+  [ -n "$safe" ] || return 1
+  safe_path="$common/sandbox-markers/$safe"
+
+  # Backward compatibility for already-live markers written before marker
+  # filenames were sanitized. Only consider legacy names that cannot escape the
+  # marker directory; new markers are always written to the safe path.
+  case "$session" in
+    */*|*\\*|.|..) ;;
+    *)
+      legacy_path="$common/sandbox-markers/$session"
+      if [ "$legacy_path" != "$safe_path" ] && [ -f "$legacy_path" ]; then
+        printf '%s' "$legacy_path"
+        return 0
+      fi
+      ;;
+  esac
+
+  printf '%s' "$safe_path"
+}
 
 sb_marker_write() {
   local path="$1" value="$2" initial_head="${3:-}"

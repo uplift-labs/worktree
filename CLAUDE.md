@@ -19,6 +19,7 @@ bash tests/run.sh tests/e2e/t01-happy-path.sh   # single file (path as arg)
 bash install.sh --target <repo>                     # install core + pre-merge-commit hook
 bash install.sh --target <repo> --with-claude-code  # also install CC adapter hooks
 bash install.sh --target <repo> --with-codex        # also install Codex hooks + launcher
+bash install.sh --target <repo> --with-opencode     # also install OpenCode project plugins
 ```
 
 The test runner sets `WORKTREE_SANDBOX_ROOT` to the project root and executes each `*.sh` file under `tests/unit` and `tests/e2e` as its own bash script. A test file is "pass" iff it exits `0`. There is no per-assertion selector — to run a single case, run the whole file.
@@ -30,7 +31,7 @@ All tests create real temporary git repos via `mktemp -d` + `git init`. There ar
 ### Two-layer split: `core/` is the contract, `adapters/` are translators
 
 - **`core/cmd/*.sh`** — stable public CLI. Inputs are CLI flags + env vars only (never JSON on stdin). Outputs are human-readable text. Exit codes follow a fixed convention: `0` = allow/success, `1` = deny/blocked with reason on stdout, `2` = bad usage. Full spec lives in `CONTRACT.md` and must be kept in sync when flags change.
-- **`core/lib/*.sh`** — internal helpers, sourced by `core/cmd/` scripts. Not part of the public contract; callers outside `core/` must not source these directly. Header comments in each file are the reference. Current libs: `git-context.sh`, `scan-uncommitted.sh`, `ttl-marker.sh`, `wt-cleanup.sh`.
+- **`core/lib/*.sh`** — internal helpers, sourced by `core/cmd/` scripts. Not part of the public contract; callers outside `core/` must not source these directly. Header comments in each file are the reference.
 - **`adapters/<host>/`** — thin translation layers (~30-50 lines per hook) that read a host tool's native input format (Claude Code JSON on stdin, git hook args, etc.), extract what they need, call `core/cmd/*` with flags, and translate the exit code + stdout back into the host's decision format. Adding a new host means writing a new adapter dir, never modifying `core/`.
 
 ### Fail-open safety-net policy
@@ -39,14 +40,14 @@ All tests create real temporary git repos via `mktemp -d` + `git init`. There ar
 
 ### State lives in two places, both TTL-managed
 
-1. **Markers** at `<git-common-dir>/sandbox-markers/<session-id>`. One small file per active session; first field = branch name, second field = creation epoch. `ttl-marker.sh` is the only module that reads/writes these. Any marker format change ripples through `sandbox-lifecycle` (stale reclaim) and `sandbox-guard` (active-session lookup).
+1. **Markers** at `<git-common-dir>/sandbox-markers/<safe-session-id>`. The safe session id replaces characters outside `[A-Za-z0-9-]` with `-` before building a marker path. One small file per active session; first field = branch name, second field = creation epoch, third field = initial HEAD. `ttl-marker.sh` owns marker path/read/write helpers. Any marker format change ripples through `sandbox-lifecycle` (stale reclaim) and `sandbox-guard` (active-session lookup).
 2. **Worktrees** at the configured worktrees dir (source-tree default: `<repo-root>/.sandbox/worktrees/<branch-name>`, installed default: `<repo-root>/.uplift/sandbox/worktrees/<branch-name>`). Created by `sandbox-init`, cleaned by `sandbox-lifecycle` via `wt-cleanup.sh`. `scan-uncommitted.sh` is the safety check that prevents cleanup of dirty trees.
 
 Every file-based marker must carry an expiry — crashed sessions leave immortal orphans otherwise (see parent `CLAUDE.md` guard-implementation principles).
 
 ### Lifecycle phases run in a fixed order
 
-`sandbox-lifecycle.sh` executes: prune git metadata → reclaim stale markers (TTL-expired) → clean merged worktrees → sweep orphan branches → sweep residual dirs. Order matters: earlier phases feed later ones (a reclaimed marker's branch becomes an orphan-sweep candidate). When adding a phase, place it carefully and update the `CONTRACT.md` listing.
+`sandbox-lifecycle.sh` executes: reflection rescue → prune git metadata → reclaim stale markers (TTL-expired) → proactive marker release → clean merged worktrees → sweep orphan branches → sweep residual dirs. Order matters: earlier phases feed later ones (a rescued sidecar may unblock cleanup; a reclaimed marker's branch becomes an orphan-sweep candidate). When adding a phase, place it carefully and update the `CONTRACT.md` listing.
 
 ### Merge gate is the enforcement point
 

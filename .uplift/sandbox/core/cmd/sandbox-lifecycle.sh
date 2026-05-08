@@ -33,6 +33,7 @@ ROOT="$(cd "$CMD_DIR/../.." && pwd)"
 . "$ROOT/core/lib/cleanup-log.sh"
 
 usage() { printf 'usage: sandbox-lifecycle.sh --repo <dir> [--ttl <seconds>] [--branch-prefix <glob>]\n' >&2; exit 2; }
+need_value() { [ "$#" -ge 2 ] && [ -n "$2" ] || usage; }
 
 # Grace period for heartbeats with unknown parent (winpid=0 or absent).
 # After this many seconds from marker creation, lifecycle kills the heartbeat
@@ -171,10 +172,10 @@ _sb_kill_dead_heartbeat() {
 REPO=""; TTL=5; PREFIX="wt-*"; WT_DIR=".sandbox/worktrees"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo)          REPO="$2"; shift 2 ;;
-    --ttl)           TTL="$2"; shift 2 ;;
-    --branch-prefix) PREFIX="$2"; shift 2 ;;
-    --worktrees-dir) WT_DIR="$2"; shift 2 ;;
+    --repo)          need_value "$@"; REPO="$2"; shift 2 ;;
+    --ttl)           need_value "$@"; TTL="$2"; shift 2 ;;
+    --branch-prefix) need_value "$@"; PREFIX="$2"; shift 2 ;;
+    --worktrees-dir) need_value "$@"; WT_DIR="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) printf 'unknown arg: %s\n' "$1" >&2; usage ;;
   esac

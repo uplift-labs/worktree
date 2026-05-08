@@ -12,12 +12,15 @@ Every script under `core/cmd/` is a stable public entry point. Scripts under
   defined per-command below.
 - **Fail-open policy:** when git context cannot be resolved, commands exit `0`
   silently — they are safety nets, not gatekeepers.
-- **Marker storage:** `<git-common-dir>/sandbox-markers/<session-id>`.
-  One small file per active session; first field = branch name, second field
-  = creation epoch, third field = initial HEAD at marker creation (added
-  v0.x — absent in legacy markers). The initial HEAD lets lifecycle Phase 3
-  distinguish "session never committed" from "session committed and merged"
-  when both leave branch == main. Markers are auto-expired via TTL.
+- **Marker storage:** `<git-common-dir>/sandbox-markers/<safe-session-id>`.
+  The safe session id is the caller-provided session id with any character
+  outside `[A-Za-z0-9-]` replaced by `-`, preventing path traversal while
+  preserving deterministic lookup across commands and adapters. One small file
+  exists per active session; first field = branch name, second field = creation
+  epoch, third field = initial HEAD at marker creation (added v0.x — absent in
+  legacy markers). The initial HEAD lets lifecycle Phase 3 distinguish
+  "session never committed" from "session committed and merged" when both leave
+  branch == main. Markers are auto-expired via TTL.
 - **Heartbeat sidecar:** `<marker-path>.hb`. Format:
   `<heartbeat_pid> <parent_winpid|0> <monitored_pid|0>`. Field 1 is the
   heartbeat process PID (used by session-end.sh to kill on clean shutdown).
@@ -95,7 +98,7 @@ sandbox-lifecycle.sh --repo <dir> [--ttl <seconds>] [--branch-prefix <glob>] [--
 | `--branch-prefix` | no       | `wt-*`                | Glob for orphan branch sweep |
 | `--worktrees-dir` | no       | `.sandbox/worktrees`  | Worktree directory relative to repo root |
 
-**Phases:** prune metadata → reclaim stale markers (TTL, with heartbeat
+**Phases:** reflection rescue → prune metadata → reclaim stale markers (TTL, with heartbeat
 sidecar PID check and 30s grace period for freshly-created markers) →
 proactive marker release for merged+clean sandboxes (with heartbeat
 sidecar PID check; ignores TTL, closes the crashed-session immortal-orphan
@@ -123,13 +126,14 @@ taken; silent otherwise.
 Session cleanup: capture-commit + self-release + lifecycle.
 
 ```
-sandbox-cleanup.sh --repo <dir> --session <id> [--worktrees-dir <rel>] [--branch-prefix <glob>]
+sandbox-cleanup.sh --repo <dir> --session <id> [--trust-dead] [--worktrees-dir <rel>] [--branch-prefix <glob>]
 ```
 
 | Flag              | Required | Default              | Description |
 |-------------------|----------|----------------------|-------------|
 | `--repo`          | yes      | —                    | Main repo path |
 | `--session`       | yes      | —                    | Session identifier (marker filename) |
+| `--trust-dead`    | no       | off                  | Treat the owning session as definitely ended; allows an empty, never-committed session to self-release and reap. Intended for host session-end/launcher exit paths, not speculative heartbeat parent-death cleanup. |
 | `--worktrees-dir` | no       | `.sandbox/worktrees` | Worktree directory relative to repo root |
 | `--branch-prefix` | no       | `wt-*`               | Glob for orphan branch sweep |
 
@@ -143,6 +147,31 @@ shutdown → invoke `sandbox-lifecycle` for full cleanup pass.
 (parent-death cleanup when a host-specific end hook never fired).
 
 **Exit:** always `0` (fail-open). Diagnostic output on stderr.
+
+### `reflection-rescue`
+
+Best-effort sidecar rescue for files written inside sandbox worktrees that need
+to land in the main repo even when the sandbox is preserved.
+
+```
+reflection-rescue.sh --repo <dir> [--worktrees-dir <rel>]
+```
+
+| Flag              | Required | Default              | Description |
+|-------------------|----------|----------------------|-------------|
+| `--repo`          | yes      | —                    | Main repo path |
+| `--worktrees-dir` | no       | `.sandbox/worktrees` | Worktree directory relative to repo root |
+
+**Environment:** `REFLECTION_RESCUE_DIR` sets the relative sidecar directory to
+scan and copy into main (default `.reinforce/reflections`). Only `*.md` files in
+that directory are rescued. Existing main copies win and duplicate worktree
+copies are removed.
+
+**Output:** one line per action (`rescued:` / `deduped:`), plus a summary only
+when work was done. Silent no-op otherwise.
+
+**Exit:** always `0` after argument validation (fail-open for missing repos,
+missing worktrees, copy/delete failures).
 
 ### `sandbox-merge-gate`
 

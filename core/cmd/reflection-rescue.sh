@@ -47,6 +47,7 @@
 set -u
 
 usage() { printf 'usage: reflection-rescue.sh --repo <dir> [--worktrees-dir <rel>]\n' >&2; exit 2; }
+need_value() { [ "$#" -ge 2 ] && [ -n "$2" ] || usage; }
 
 REPO=""
 WT_DIR_REL=".sandbox/worktrees"
@@ -54,8 +55,8 @@ REFL_REL="${REFLECTION_RESCUE_DIR:-.reinforce/reflections}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo)          REPO="$2"; shift 2 ;;
-    --worktrees-dir) WT_DIR_REL="$2"; shift 2 ;;
+    --repo)          need_value "$@"; REPO="$2"; shift 2 ;;
+    --worktrees-dir) need_value "$@"; WT_DIR_REL="$2"; shift 2 ;;
     -h|--help)       usage ;;
     *) printf 'unknown arg: %s\n' "$1" >&2; usage ;;
   esac

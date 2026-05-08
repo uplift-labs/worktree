@@ -17,6 +17,7 @@ ADAPTER_DIR="$(cd "$HOOK_DIR/.." && pwd)"
 . "$ADAPTER_DIR/lib/layout.sh"
 ROOT=$(sandbox_adapter_root "$ADAPTER_DIR")
 . "$ROOT/core/lib/git-context.sh"
+. "$ROOT/core/lib/ttl-marker.sh"
 
 INPUT=$(cat)
 SESSION=$(json_field "session_id" "$INPUT")
@@ -102,13 +103,13 @@ _launch_heartbeat() {
 # Suppress creation on compact restart — just re-emit the banner for existing sandbox
 if [ "$SOURCE" = "compact" ]; then
   GIT_COMMON=$(sb_git_common_dir "$REPO") || exit 0
-  MARKERS_DIR="$GIT_COMMON/sandbox-markers"
-  if [ -f "$MARKERS_DIR/$SESSION" ]; then
-    BR=$(awk '{print $1}' "$MARKERS_DIR/$SESSION" 2>/dev/null)
+  MARKER=$(sb_marker_path "$GIT_COMMON" "$SESSION") || exit 0
+  if [ -f "$MARKER" ]; then
+    BR=$(awk '{print $1}' "$MARKER" 2>/dev/null)
     if [ -n "$BR" ] && [ -d "$REPO/$WT_DIR/$BR" ]; then
       printf '[sandbox] Sandbox (re-injected): %s/%s/%s — use this root for all file ops.\n' "$REPO" "$WT_DIR" "$BR"
       # Re-launch heartbeat — previous one died with the old process.
-      _launch_heartbeat "$MARKERS_DIR/$SESSION"
+      _launch_heartbeat "$MARKER"
     fi
   fi
   exit 0
@@ -131,7 +132,8 @@ if SB=$(bash "$ROOT/core/cmd/sandbox-init.sh" \
 
   # Launch heartbeat — keeps marker fresh while Claude Code is alive.
   GIT_COMMON=$(sb_git_common_dir "$REPO") || exit 0
-  _launch_heartbeat "$GIT_COMMON/sandbox-markers/$SESSION"
+  MARKER=$(sb_marker_path "$GIT_COMMON" "$SESSION") || exit 0
+  _launch_heartbeat "$MARKER"
 else
   # Surface sandbox creation failure. Without this banner the failure is
   # silent — the session runs in the main repo thinking it has isolation

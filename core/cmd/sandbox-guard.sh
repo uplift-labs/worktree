@@ -33,14 +33,15 @@ ROOT="$(cd "$CMD_DIR/../.." && pwd)"
 . "$ROOT/core/lib/ttl-marker.sh"
 
 usage() { printf 'usage: sandbox-guard.sh --session <id> --file <path> [--repo <dir>] [--worktrees-dir <rel>]\n' >&2; exit 2; }
+need_value() { [ "$#" -ge 2 ] && [ -n "$2" ] || usage; }
 
 SESSION=""; FILE=""; REPO=""; WT_DIR=".sandbox/worktrees"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --session)       SESSION="$2"; shift 2 ;;
-    --file)          FILE="$2"; shift 2 ;;
-    --repo)          REPO="$2"; shift 2 ;;
-    --worktrees-dir) WT_DIR="$2"; shift 2 ;;
+    --session)       need_value "$@"; SESSION="$2"; shift 2 ;;
+    --file)          need_value "$@"; FILE="$2"; shift 2 ;;
+    --repo)          need_value "$@"; REPO="$2"; shift 2 ;;
+    --worktrees-dir) need_value "$@"; WT_DIR="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) printf 'unknown arg: %s\n' "$1" >&2; usage ;;
   esac
@@ -67,7 +68,7 @@ REPO_ROOT=$(sb_git_root "$REPO") || exit 0
 
 GIT_COMMON=$(sb_git_common_dir "$REPO_ROOT") || exit 0
 
-MARKER="$GIT_COMMON/sandbox-markers/$SESSION"
+MARKER=$(sb_marker_path "$GIT_COMMON" "$SESSION") || exit 0
 [ -f "$MARKER" ] || exit 0  # no active sandbox → no restriction
 
 WT_BRANCH=$(sb_marker_read_value "$MARKER")

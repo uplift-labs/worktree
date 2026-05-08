@@ -33,15 +33,16 @@ ROOT="$(cd "$CMD_DIR/../.." && pwd)"
 . "$ROOT/core/lib/cleanup-log.sh"
 
 usage() { printf 'usage: sandbox-cleanup.sh --repo <dir> --session <id> [--worktrees-dir <rel>] [--branch-prefix <glob>]\n' >&2; exit 2; }
+need_value() { [ "$#" -ge 2 ] && [ -n "$2" ] || usage; }
 
 REPO=""; SESSION=""; TRUST_DEAD=0; WT_DIR=".sandbox/worktrees"; BR_PREFIX="wt-*"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo)          REPO="$2"; shift 2 ;;
-    --session)       SESSION="$2"; shift 2 ;;
+    --repo)          need_value "$@"; REPO="$2"; shift 2 ;;
+    --session)       need_value "$@"; SESSION="$2"; shift 2 ;;
     --trust-dead)    TRUST_DEAD=1; shift ;;
-    --worktrees-dir) WT_DIR="$2"; shift 2 ;;
-    --branch-prefix) BR_PREFIX="$2"; shift 2 ;;
+    --worktrees-dir) need_value "$@"; WT_DIR="$2"; shift 2 ;;
+    --branch-prefix) need_value "$@"; BR_PREFIX="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) printf 'unknown arg: %s\n' "$1" >&2; usage ;;
   esac
@@ -50,7 +51,7 @@ done
 [ -z "$SESSION" ] && usage
 
 GIT_COMMON=$(sb_git_common_dir "$REPO") || exit 0
-MARKER="$GIT_COMMON/sandbox-markers/$SESSION"
+MARKER=$(sb_marker_path "$GIT_COMMON" "$SESSION") || exit 0
 [ -f "$MARKER" ] || exit 0
 
 BRANCH=$(awk '{print $1}' "$MARKER")

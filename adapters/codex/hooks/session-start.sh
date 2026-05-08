@@ -10,6 +10,7 @@ ADAPTER_DIR="$(cd "$HOOK_DIR/.." && pwd)"
 . "$ADAPTER_DIR/lib/layout.sh"
 ROOT=$(sandbox_adapter_root "$ADAPTER_DIR")
 . "$ROOT/core/lib/git-context.sh"
+. "$ROOT/core/lib/ttl-marker.sh"
 
 INPUT=$(cat)
 CODEX_SESSION=$(json_field "session_id" "$INPUT")
@@ -81,6 +82,7 @@ _emit_context() {
 }
 
 GIT_COMMON=$(sb_git_common_dir "$REPO") || exit 0
+MARKER=$(sb_marker_path "$GIT_COMMON" "$SESSION") || exit 0
 
 # Launcher mode: codex-sandbox already created the worktree and forced Codex
 # to start in it. The hook only refreshes lifecycle state and reinforces cwd.
@@ -89,7 +91,7 @@ if [ "${CODEX_SANDBOX_ACTIVE:-}" = "1" ] && [ -n "${CODEX_SANDBOX_WORKTREE:-}" ]
     --repo "$REPO" \
     --worktrees-dir "$WT_DIR" \
     --branch-prefix "$BR_GLOB" >/dev/null 2>&1 || true
-  _launch_heartbeat "$GIT_COMMON/sandbox-markers/$SESSION"
+  _launch_heartbeat "$MARKER"
   _emit_context "$CODEX_SANDBOX_WORKTREE"
   exit 0
 fi
@@ -104,7 +106,7 @@ if SB=$(bash "$ROOT/core/cmd/sandbox-init.sh" \
     --session "$SESSION" \
     --worktrees-dir "$WT_DIR" \
     --branch-prefix "$BR_PREFIX" 2>&1) && [ -n "$SB" ]; then
-  _launch_heartbeat "$GIT_COMMON/sandbox-markers/$SESSION"
+  _launch_heartbeat "$MARKER"
   if [ -n "$LC_OUT" ]; then
     _msg=$(json_escape "$LC_OUT"$'\n'"Use this root for all file operations: $SB")
     printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}' "$_msg"

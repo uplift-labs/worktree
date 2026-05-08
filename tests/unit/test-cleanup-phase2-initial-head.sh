@@ -19,7 +19,7 @@ FAIL=0
 PASS=0
 
 _here="$(cd "$(dirname "$0")" && pwd)"
-SANDBOX_ROOT="$(cd "$_here/.." && pwd)"
+SANDBOX_ROOT="$(cd "$_here/../.." && pwd)"
 
 _tmpdir=$(mktemp -d -t sb-cleanup-p2-test-XXXXXX)
 trap 'rm -rf "$_tmpdir"' EXIT

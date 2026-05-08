@@ -17,6 +17,7 @@ ADAPTER_DIR="$(cd "$HOOK_DIR/.." && pwd)"
 . "$ADAPTER_DIR/lib/layout.sh"
 ROOT=$(sandbox_adapter_root "$ADAPTER_DIR")
 . "$ROOT/core/lib/git-context.sh"
+. "$ROOT/core/lib/ttl-marker.sh"
 
 INPUT=$(cat)
 SESSION=$(json_field "session_id" "$INPUT")
@@ -25,7 +26,7 @@ REPO="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 [ -z "$SESSION" ] && exit 0
 
 GIT_COMMON=$(sb_git_common_dir "$REPO") || exit 0
-MARKER="$GIT_COMMON/sandbox-markers/$SESSION"
+MARKER=$(sb_marker_path "$GIT_COMMON" "$SESSION") || exit 0
 [ -f "$MARKER" ] || exit 0
 
 # Heartbeat: refresh marker mtime so lifecycle's TTL reclaim treats this

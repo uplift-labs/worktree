@@ -13,6 +13,7 @@ usage() {
   printf 'usage: codex-sandbox.sh [--repo <dir>] [--session <id>] [--] [codex args...]\n' >&2
   exit 2
 }
+need_value() { [ "$#" -ge 2 ] && [ -n "$2" ] || usage; }
 
 REPO=""
 SESSION=""
@@ -20,8 +21,8 @@ CODEX_ARGS=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo)    REPO="$2"; shift 2 ;;
-    --session) SESSION="$2"; shift 2 ;;
+    --repo)    need_value "$@"; REPO="$2"; shift 2 ;;
+    --session) need_value "$@"; SESSION="$2"; shift 2 ;;
     --) shift; CODEX_ARGS+=("$@"); break ;;
     -h|--help) usage ;;
     *) CODEX_ARGS+=("$1"); shift ;;

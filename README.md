@@ -115,7 +115,8 @@ worktree-sandbox/
 │   │   ├── sandbox-guard.sh
 │   │   ├── sandbox-lifecycle.sh
 │   │   ├── sandbox-cleanup.sh
-│   │   └── sandbox-merge-gate.sh
+│   │   ├── sandbox-merge-gate.sh
+│   │   └── reflection-rescue.sh
 │   └── lib/         ← internal helpers (not public API)
 │       └── json-merge.py  ← idempotent settings.json merger
 ├── adapters/
@@ -134,7 +135,7 @@ worktree-sandbox/
 
 State lives in two places, both TTL-managed:
 
-1. **Markers** — one small file per session at `<git-common-dir>/sandbox-markers/<session-id>`. Contains branch name, creation epoch, and initial HEAD. A background **heartbeat** process touches the marker every second while the session is alive.
+1. **Markers** — one small file per session at `<git-common-dir>/sandbox-markers/<safe-session-id>`. Session ids are sanitized to `[A-Za-z0-9-]` for marker filenames. Contains branch name, creation epoch, and initial HEAD. A background **heartbeat** process touches the marker every second while the session is alive.
 2. **Worktrees** — by default at `<repo>/.sandbox/worktrees/<branch-name>` when running from the source tree; installed adapters pass `<repo>/.uplift/sandbox/worktrees/<branch-name>`. Standard git worktrees, created by `sandbox-init`, cleaned by `sandbox-lifecycle`.
 
 ### Fail-open policy
@@ -148,6 +149,8 @@ All `core/cmd/` scripts exit `0` silently when git context can't be resolved (no
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh) --with-claude-code
 ```
+
+`remote-install.sh` clones the same release by default (`v1.1.0`). For testing another branch or tag, pass `--ref <git-ref>` or set `WORKTREE_SANDBOX_REF`.
 
 **From a local clone:**
 
@@ -165,7 +168,7 @@ Re-running is safe (idempotent). The `post-merge` hook auto-syncs `.uplift/sandb
 
 ## CLI reference
 
-Five public commands. Full contract in [`CONTRACT.md`](CONTRACT.md).
+Six public commands. Full contract in [`CONTRACT.md`](CONTRACT.md).
 
 | Command | Purpose |
 |---|---|
@@ -174,6 +177,7 @@ Five public commands. Full contract in [`CONTRACT.md`](CONTRACT.md).
 | `sandbox-lifecycle.sh` | Periodic cleanup: merged worktrees, stale markers, orphan branches, residual dirs. |
 | `sandbox-cleanup.sh` | Session cleanup: capture-commit + self-release + lifecycle. Called by session-end and heartbeat. |
 | `sandbox-merge-gate.sh` | Pre-merge validation: block if worktree has uncommitted changes. |
+| `reflection-rescue.sh` | Best-effort rescue for Markdown sidecar files stranded inside preserved sandbox worktrees. |
 
 ## Adapters
 
@@ -265,12 +269,13 @@ For Claude Code, `session-end.sh` runs on termination (`/exit`, Ctrl+C/D, termin
 
 Windows can't guarantee SIGHUP delivery. Sessions can be killed by OOM, power loss, or `kill -9`. The TTL safety net in `sandbox-lifecycle` catches everything that SessionEnd missed:
 
-1. `git worktree prune` — drop metadata for manually-removed worktrees.
-2. **TTL reclaim** — delete markers whose mtime exceeds TTL. Sessions that never committed get an extended 5-minute TTL to protect live sessions with dead heartbeats.
-3. **Proactive release** — drop markers for sandboxes already merged+clean, even if TTL hasn't expired.
-4. **Clean merged worktrees** — remove worktrees whose branch is an ancestor of main and has no uncommitted work. Marker-protected branches are skipped.
-5. **Orphan branch sweep** — delete `wt-*` branches that no worktree references and are ancestors of main.
-6. **Residual dir sweep** — remove empty worktree directories.
+1. **Reflection rescue** — copy configured Markdown sidecar files from preserved sandbox worktrees back into main, then remove duplicate worktree copies.
+2. `git worktree prune` — drop metadata for manually-removed worktrees.
+3. **TTL reclaim** — delete markers whose mtime exceeds TTL. Sessions that never committed get an extended 5-minute TTL to protect live sessions with dead heartbeats.
+4. **Proactive release** — drop markers for sandboxes already merged+clean, even if TTL hasn't expired.
+5. **Clean merged worktrees** — remove worktrees whose branch is an ancestor of main and has no uncommitted work. Marker-protected branches are skipped.
+6. **Orphan branch sweep** — delete `wt-*` branches that no worktree references and are ancestors of main.
+7. **Residual dir sweep** — remove empty worktree directories.
 
 ### What happens in each scenario
 
@@ -295,7 +300,7 @@ bash tests/run.sh e2e           # e2e only
 bash tests/run.sh tests/e2e/t01-happy-path.sh   # single file
 ```
 
-32 test files (9 unit + 23 e2e) covering all core commands and adapter hooks. All tests create real temporary git repos via `mktemp -d` + `git init`. No mocks.
+37 test files (14 unit + 23 e2e) covering all core commands and adapter hooks. All tests create real temporary git repos via `mktemp -d` + `git init`. No mocks.
 
 ## Platform support
 

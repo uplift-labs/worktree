@@ -21,11 +21,12 @@ ROOT="$(cd "$CMD_DIR/../.." && pwd)"
 . "$ROOT/core/lib/scan-uncommitted.sh"
 
 usage() { printf 'usage: sandbox-merge-gate.sh --worktree <dir>\n' >&2; exit 2; }
+need_value() { [ "$#" -ge 2 ] && [ -n "$2" ] || usage; }
 
 WT=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --worktree) WT="$2"; shift 2 ;;
+    --worktree) need_value "$@"; WT="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) printf 'unknown arg: %s\n' "$1" >&2; usage ;;
   esac

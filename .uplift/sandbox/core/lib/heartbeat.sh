@@ -54,6 +54,9 @@
 
 set -u
 
+usage() { printf 'usage: heartbeat.sh --marker <marker-path> [--pid <pid>] [--interval <seconds>] [--max-age <seconds>] [--parent-winpid <windows-pid>] [--repo <dir>] [--sandbox-root <dir>] [--worktrees-dir <rel>] [--branch-prefix <glob>] [--owner-process-names <name[,name...]>]\n' >&2; exit 2; }
+need_value() { [ "$#" -ge 2 ] && [ -n "$2" ] || usage; }
+
 # Detect MSYS/Windows for tasklist-based sanity check before destructive cleanup.
 _is_msys=0
 case "$(uname -s)" in MINGW*|MSYS*) _is_msys=1 ;; esac
@@ -71,16 +74,16 @@ OWNER_PROCESS_NAMES="claude.exe,claude-code.exe,claude-desktop.exe"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --pid)            PID="$2";            shift 2 ;;
-    --marker)         MARKER="$2";         shift 2 ;;
-    --interval)       INTERVAL="$2";       shift 2 ;;
-    --max-age)        MAX_AGE="$2";        shift 2 ;;
-    --parent-winpid)  PARENT_WINPID="$2";  shift 2 ;;
-    --repo)           REPO="$2";           shift 2 ;;
-    --sandbox-root)   SANDBOX_ROOT="$2";   shift 2 ;;
-    --worktrees-dir)  WT_DIR="$2";         shift 2 ;;
-    --branch-prefix)  BR_PREFIX="$2";      shift 2 ;;
-    --owner-process-names) OWNER_PROCESS_NAMES="$2"; shift 2 ;;
+    --pid)            need_value "$@"; PID="$2";            shift 2 ;;
+    --marker)         need_value "$@"; MARKER="$2";         shift 2 ;;
+    --interval)       need_value "$@"; INTERVAL="$2";       shift 2 ;;
+    --max-age)        need_value "$@"; MAX_AGE="$2";        shift 2 ;;
+    --parent-winpid)  need_value "$@"; PARENT_WINPID="$2";  shift 2 ;;
+    --repo)           need_value "$@"; REPO="$2";           shift 2 ;;
+    --sandbox-root)   need_value "$@"; SANDBOX_ROOT="$2";   shift 2 ;;
+    --worktrees-dir)  need_value "$@"; WT_DIR="$2";         shift 2 ;;
+    --branch-prefix)  need_value "$@"; BR_PREFIX="$2";      shift 2 ;;
+    --owner-process-names) need_value "$@"; OWNER_PROCESS_NAMES="$2"; shift 2 ;;
     *) shift ;;
   esac
 done

@@ -10,6 +10,7 @@ ADAPTER_DIR="$(cd "$HOOK_DIR/.." && pwd)"
 . "$ADAPTER_DIR/lib/layout.sh"
 ROOT=$(sandbox_adapter_root "$ADAPTER_DIR")
 . "$ROOT/core/lib/git-context.sh"
+. "$ROOT/core/lib/ttl-marker.sh"
 
 INPUT=$(cat)
 CODEX_SESSION=$(json_field "session_id" "$INPUT")
@@ -22,8 +23,10 @@ SESSION="${CODEX_SANDBOX_SESSION:-$CODEX_SESSION}"
 
 if [ -n "$SESSION" ]; then
   GIT_COMMON=$(sb_git_common_dir "$REPO" 2>/dev/null || true)
-  if [ -n "$GIT_COMMON" ] && [ -f "$GIT_COMMON/sandbox-markers/$SESSION" ]; then
-    touch "$GIT_COMMON/sandbox-markers/$SESSION" 2>/dev/null || true
+  MARKER=""
+  [ -n "$GIT_COMMON" ] && MARKER=$(sb_marker_path "$GIT_COMMON" "$SESSION" 2>/dev/null || true)
+  if [ -n "$MARKER" ] && [ -f "$MARKER" ]; then
+    touch "$MARKER" 2>/dev/null || true
   fi
 fi
 
