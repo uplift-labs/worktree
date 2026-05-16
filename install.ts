@@ -218,8 +218,8 @@ function mergeOpenCodePermissions(file: string): void {
 
 function preMergeHookSource(prefix: string): string {
   return `#!/usr/bin/env node
-const { spawnSync } = require("node:child_process")
-const path = require("node:path")
+import { spawnSync } from "node:child_process"
+import path from "node:path"
 const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" })
 if (repo.status !== 0) process.exit(0)
 const repoRoot = repo.stdout.trim()
@@ -253,10 +253,9 @@ process.exit(0)
 
 function postMergeHookSource(prefix: string): string {
   return `#!/usr/bin/env node
-const { spawn } = require("node:child_process")
-const fs = require("node:fs")
-const path = require("node:path")
-const { spawnSync } = require("node:child_process")
+import { spawn, spawnSync } from "node:child_process"
+import fs from "node:fs"
+import path from "node:path"
 const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" })
 if (repo.status !== 0) process.exit(0)
 const repoRoot = repo.stdout.trim()
