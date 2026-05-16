@@ -13,6 +13,7 @@ tests/tmp/
 # Build / install
 /build/
 /dist/
+/node_modules/
 
 # OpenCode task-proof scratch artifacts
 /.opencode/tasks/

@@ -8,7 +8,7 @@ import {
   resolveSandboxWorktreeAsync,
   shouldRunTuiPluginAsync,
   tuiPluginID,
-} from "./worktree-sandbox-branch-core.js"
+} from "./worktree-sandbox-branch-core.ts"
 
 const MODULE_URL = import.meta.url
 
@@ -42,6 +42,10 @@ function eventSessionID(event) {
   return event?.properties?.sessionID || event?.properties?.info?.id || event?.sessionID || ""
 }
 
+function errorMessage(error) {
+  return error && typeof error === "object" && "message" in error ? String(error.message) : String(error)
+}
+
 function BranchBadge(props) {
   const [branch, setBranch] = createSignal("")
   const api = props.api
@@ -61,7 +65,7 @@ function BranchBadge(props) {
       if (process.env.AISB_OPENCODE_BRANCH_DEBUG !== "1") return
       api.ui.toast({
         variant: "warning",
-        message: `branch ${phase} failed: ${error?.message || error}`,
+        message: `branch ${phase} failed: ${errorMessage(error)}`,
         duration: 3000,
       })
     },
@@ -108,7 +112,7 @@ function SandboxFiles(props) {
           if (process.env.AISB_OPENCODE_FILES_DEBUG !== "1") return
           api.ui.toast({
             variant: "warning",
-            message: `sandbox files ${phase} failed: ${error?.message || error}`,
+            message: `sandbox files ${phase} failed: ${errorMessage(error)}`,
             duration: 3000,
           })
         },
@@ -138,7 +142,7 @@ function SandboxFiles(props) {
       if (process.env.AISB_OPENCODE_FILES_DEBUG !== "1") return
       api.ui.toast({
         variant: "warning",
-        message: `sandbox files ${phase} failed: ${error?.message || error}`,
+        message: `sandbox files ${phase} failed: ${errorMessage(error)}`,
         duration: 3000,
       })
     },

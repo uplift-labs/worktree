@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": false,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": [
+    "*.ts",
+    "core/**/*.ts",
+    "adapters/**/*.ts",
+    "adapters/**/*.tsx",
+    "tests/**/*.ts",
+    "types/**/*.d.ts"
+  ],
+  "exclude": [
+    ".git",
+    ".opencode",
+    ".uplift",
+    "node_modules",
+    "dist",
+    "build"
+  ]
+}

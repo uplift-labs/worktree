@@ -1,0 +1,20 @@
+{
+  "name": "worktree-sandbox",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Git worktree isolation and automatic cleanup for OpenCode sessions.",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck",
+    "test": "node --test \"tests/*.test.ts\"",
+    "verify": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

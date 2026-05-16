@@ -4,55 +4,50 @@
 
 > **This is a personal pet project. Use at your own risk.**
 
-Git worktree isolation and automatic cleanup for OpenCode sessions. Keeps `main` untouched, routes supported OpenCode tools into a session worktree, and cleans up stale sandboxes. Core runtime has zero dependencies beyond `bash` and `git`.
+Git worktree isolation and automatic cleanup for OpenCode sessions. Keeps `main` untouched, routes supported OpenCode tools into a session worktree, and cleans up stale sandboxes. The runtime is TypeScript-first and requires Node.js `24+` plus `git`.
 
 ## Quickstart
 
 Install into your project:
 
-```bash
-bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh)
+```powershell
+git clone --depth 1 --branch v2.0.0 https://github.com/uplift-labs/worktree-sandbox.git
+node worktree-sandbox/install.ts --target .
 opencode
 ```
 
 Optional native OpenCode permission defaults:
 
-```bash
-bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh) --with-opencode-permissions
+```powershell
+node worktree-sandbox/install.ts --target . --with-opencode-permissions
 opencode
 ```
 
-Optional OS-level sandboxing for OpenCode `bash` commands on macOS/Linux:
+Optional OS-level sandboxing for OpenCode `bash` tool calls on macOS/Linux:
 
-```bash
-bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh) --with-opencode-os-sandbox
+```powershell
+node worktree-sandbox/install.ts --target . --with-opencode-os-sandbox
 opencode
 ```
 
-That's it. Your repo now has OpenCode sandbox isolation. Every OpenCode session gets its own worktree, `main` is protected by a merge gate, and stale sandboxes clean themselves up.
+Your repo now has OpenCode sandbox isolation. Every OpenCode session gets its own worktree, `main` is protected by a merge gate, and stale sandboxes clean themselves up.
 
 <details>
 <summary>Manual core usage</summary>
 
-```bash
+```powershell
 # Create a sandbox from main
-bash .uplift/sandbox/core/cmd/sandbox-init.sh \
-  --repo "$PWD" \
-  --session demo \
+node .uplift/sandbox/core/cmd/sandbox-init.ts `
+  --repo "$PWD" `
+  --session demo `
   --worktrees-dir .uplift/sandbox/worktrees
-cd .uplift/sandbox/worktrees/wt-demo
 
-# Work freely
-echo "hello" > feature.txt
-git add feature.txt && git commit -m "feat: add feature"
-
-# Merge back when ready
-cd /path/to/repo
+# Merge back when ready from the main repo
 git merge wt-demo
 
 # Clean up stale completed worktrees
-bash .uplift/sandbox/core/cmd/sandbox-lifecycle.sh \
-  --repo "$PWD" \
+node .uplift/sandbox/core/cmd/sandbox-lifecycle.ts `
+  --repo "$PWD" `
   --worktrees-dir .uplift/sandbox/worktrees
 ```
 
@@ -69,7 +64,7 @@ AI coding agents operate inside your git repository. Without guardrails, two thi
 
 The tool creates a disposable **git worktree** for each OpenCode session, enforces a **merge gate** before anything reaches `main`, and runs **automatic cleanup** of stale state.
 
-```
+```text
 main (protected)          wt-abc123... (worktree)
 |                         |
 |  merge gate             |  OpenCode tools run here
@@ -88,14 +83,15 @@ Three guarantees:
 
 ## Architecture
 
-```
+```text
 worktree-sandbox/
 ├── core/
-│   ├── cmd/         public CLI scripts
-│   └── lib/         internal shell helpers
+│   ├── cmd/         public TypeScript CLI commands
+│   └── lib/         internal TypeScript helpers
 ├── adapters/
 │   └── opencode/    OpenCode server + TUI plugins
-└── install.sh
+├── install.ts
+└── remote-install.ts
 ```
 
 `core/` is the stable contract. CLI flags in, human-readable text out, fixed exit codes: `0` allow/success, `1` deny/failure with reason, `2` bad usage. Full spec lives in [`CONTRACT.md`](CONTRACT.md).
@@ -106,24 +102,25 @@ Installed copies live under `.uplift/sandbox/`; project-local OpenCode plugin fi
 
 ## Install
 
-Remote install:
-
-```bash
-bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh)
-```
-
-`remote-install.sh` clones the same release by default (`v1.1.0`). For testing another branch or tag, pass `--ref <git-ref>` or set `WORKTREE_SANDBOX_REF`.
-
 Local install:
 
-```bash
+```powershell
 git clone https://github.com/uplift-labs/worktree-sandbox
-bash worktree-sandbox/install.sh --target /path/to/repo
+node worktree-sandbox/install.ts --target /path/to/repo
 ```
+
+Remote-style install without Bash:
+
+```powershell
+git clone --depth 1 --branch v2.0.0 https://github.com/uplift-labs/worktree-sandbox.git
+node worktree-sandbox/remote-install.ts --ref v2.0.0
+```
+
+`remote-install.ts` clones the requested release into a temp directory and runs `install.ts`. For testing another branch or tag, pass `--ref <git-ref>` or set `WORKTREE_SANDBOX_REF`.
 
 The installer copies `core/` to `.uplift/sandbox/core/`, copies the OpenCode adapter to `.uplift/sandbox/adapters/opencode/`, writes project-local plugins to `.opencode/plugins/` and `.opencode/tui-plugins/`, registers the TUI plugin in `.opencode/tui.json`, wires `pre-merge-commit` and `post-merge` git hooks, and ignores `.uplift/sandbox/worktrees/`.
 
-Re-running is safe. The `post-merge` hook re-runs `install.sh` in the background after every merge so installed copies stay in sync with source.
+Re-running is safe. The `post-merge` hook re-runs `install.ts` in the background after every merge so installed copies stay in sync with source.
 
 ## OpenCode Adapter
 
@@ -138,51 +135,50 @@ OpenCode does not expose a pre-bootstrap hook that mutates its internal project 
 
 The TUI plugin reads the session sandbox worktree from `OPENCODE_SANDBOX_WORKTREE` or the session marker. Tune fallback polling with `AISB_OPENCODE_BRANCH_REFRESH_MS`, `AISB_OPENCODE_FILES_REFRESH_MS`, and `AISB_OPENCODE_GIT_TIMEOUT_MS`. Enable debug logs with `AISB_OPENCODE_BRANCH_DEBUG=1` or `AISB_OPENCODE_FILES_DEBUG=1`.
 
-Optional native permission hardening is available with `--with-opencode-permissions`. It preserves existing user rules and only adds missing defaults: `external_directory` and `doom_loop` ask, `.env` reads are denied while `.env.example` remains allowed, and obviously destructive `bash` patterns such as hard resets, force pushes, and `rm -rf *` are denied.
+Optional native permission hardening is available with `--with-opencode-permissions`. It preserves existing user rules and only adds missing defaults: `external_directory` and `doom_loop` ask, `.env` reads are denied while `.env.example` remains allowed, and obviously destructive `bash` tool patterns such as hard resets, force pushes, and `rm -rf *` are denied.
 
 Optional OS-level sandboxing is available with `--with-opencode-os-sandbox`. This adds the community `opencode-sandbox` npm plugin so OpenCode `bash` tool calls are wrapped by `@anthropic-ai/sandbox-runtime` on supported platforms. It does not replace worktree isolation.
 
-OpenCode compatibility checklist: do not run with `OPENCODE_PURE=1` when verifying the adapter because pure mode skips project plugins; re-run `bash tests/run.sh tests/e2e/t23-opencode-adapter-smoke.sh` after OpenCode upgrades; recheck server hooks `event`, `tool.execute.before`, `shell.env`, `tool.definition`, and `experimental.chat.system.transform`; recheck TUI event names such as `session.status`, `file.edited`, `vcs.branch.updated`, and `session.next.*` if OpenCode changes its event bus.
+OpenCode compatibility checklist: do not run with `OPENCODE_PURE=1` when verifying the adapter because pure mode skips project plugins; re-run `npm test` after OpenCode upgrades; recheck server hooks `event`, `tool.execute.before`, `shell.env`, `tool.definition`, and `experimental.chat.system.transform`; recheck TUI event names such as `session.status`, `file.edited`, `vcs.branch.updated`, and `session.next.*` if OpenCode changes its event bus.
 
 ## Git Hooks
 
-Installed automatically by `install.sh`:
+Installed automatically by `install.ts`:
 
 | Hook | Purpose |
 |---|---|
 | `pre-merge-commit` | Blocks merge if the sandbox worktree being merged has tracked modifications or untracked files. |
-| `post-merge` | Re-runs `install.sh` in the background after every merge to keep `.uplift/sandbox/` and `.opencode/` in sync. |
+| `post-merge` | Re-runs `install.ts` in the background after every merge to keep `.uplift/sandbox/` and `.opencode/` in sync. |
 
 ## CLI Reference
 
 | Command | Purpose |
 |---|---|
-| `sandbox-init.sh` | Create a session sandbox worktree branched from `main` or `master`. |
-| `sandbox-guard.sh` | Path gate: allow or deny an edit based on active sandbox location. |
-| `sandbox-lifecycle.sh` | Cleanup merged worktrees, stale markers, orphan branches, and residual dirs. |
-| `sandbox-cleanup.sh` | Session cleanup: capture-commit pending work, self-release merged clean marker, then run lifecycle. |
-| `sandbox-merge-gate.sh` | Pre-merge validation: block if the sandbox worktree has uncommitted changes. |
-| `reflection-rescue.sh` | Best-effort rescue for Markdown sidecar files stranded inside preserved sandbox worktrees. |
+| `sandbox-init.ts` | Create a session sandbox worktree branched from `main` or `master`. |
+| `sandbox-guard.ts` | Path gate: allow or deny an edit based on active sandbox location. |
+| `sandbox-lifecycle.ts` | Cleanup merged worktrees, stale markers, orphan branches, and residual dirs. |
+| `sandbox-cleanup.ts` | Session cleanup: capture-commit pending work, self-release merged clean marker, then run lifecycle. |
+| `sandbox-merge-gate.ts` | Pre-merge validation: block if the sandbox worktree has uncommitted changes. |
+| `reflection-rescue.ts` | Best-effort rescue for Markdown sidecar files stranded inside preserved sandbox worktrees. |
 
 ## Testing
 
-```bash
-bash tests/run.sh               # all tests
-bash tests/run.sh unit          # unit only
-bash tests/run.sh e2e           # e2e only
-bash tests/run.sh tests/e2e/t23-opencode-adapter-smoke.sh
+```powershell
+npm ci
+npm run typecheck
+npm test
+npm run verify
 ```
 
-Tests cover core commands, lifecycle behavior, installer behavior, and the OpenCode adapter. Test files create real temporary git repositories via `mktemp -d` and `git init`.
+Tests cover core commands, installer behavior, and the OpenCode adapter. Test files create real temporary git repositories via Node's `fs.mkdtempSync` and `git init`.
 
 ## Platform Support
 
 | Platform | Status |
 |---|---|
-| Windows (Git Bash / MSYS) | Supported. Windows-specific code handles PID checks, path normalization, and background process quirks. |
-| Linux | Supported by the shell runtime; OS-level sandbox option depends on platform helpers. |
-| macOS | Supported by the shell runtime; OS-level sandbox option depends on platform helpers. |
-| Windows (PowerShell native) | Not supported. Use Git Bash or WSL. |
+| Windows | Supported with Node.js `24+`; Windows-specific code handles PID checks, path normalization, and background process quirks. |
+| Linux | Supported with Node.js `24+`; OS-level sandbox option depends on platform helpers. |
+| macOS | Supported with Node.js `24+`; OS-level sandbox option depends on platform helpers. |
 
 ## License
 
