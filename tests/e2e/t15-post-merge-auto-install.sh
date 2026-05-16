@@ -48,7 +48,7 @@ cp -r "$ROOT/adapters" "$REPO/adapters"
 cp "$ROOT/install.sh" "$REPO/install.sh"
 (cd "$REPO" && git add -A && git commit -q -m "chore: add source tree")
 
-bash "$REPO/install.sh" --target "$REPO" --with-claude-code --with-codex >/dev/null 2>&1
+bash "$REPO/install.sh" --target "$REPO" >/dev/null 2>&1
 GIT_COMMON=$(git -C "$REPO" rev-parse --git-common-dir 2>/dev/null)
 case "$GIT_COMMON" in
   /*|[A-Za-z]:*) ;;
@@ -71,15 +71,15 @@ echo "dummy" > "$REPO/dummy.txt"
 
 # post-merge runs in background; wait for managed files to settle.
 wait_for_file_not_contains "$REPO/.uplift/sandbox/core/lib/heartbeat.sh" "TAMPERED" || true
-wait_for_file "$REPO/.uplift/sandbox/adapters/codex/hooks/session-start.sh" || true
+wait_for_file "$REPO/.uplift/sandbox/adapters/opencode/plugins/worktree-sandbox.js" || true
 
 AFTER=$(head -1 "$REPO/.uplift/sandbox/core/lib/heartbeat.sh")
 assert_not_contains "tampered file restored" "TAMPERED" "$AFTER"
 assert_contains "restored file has shebang" "#!/bin/bash" "$AFTER"
 
-echo "== post-merge detects --with-claude-code from existing adapter dir =="
-assert_file_exists "adapter still present after post-merge" "$REPO/.uplift/sandbox/adapter/hooks/session-start.sh"
-assert_file_exists "codex adapter still present after post-merge" "$REPO/.uplift/sandbox/adapters/codex/hooks/session-start.sh"
+echo "== post-merge preserves default OpenCode install =="
+assert_file_exists "opencode adapter still present after post-merge" "$REPO/.uplift/sandbox/adapters/opencode/plugins/worktree-sandbox.js"
+assert_file_exists "opencode project plugin still present after post-merge" "$REPO/.opencode/plugins/worktree-sandbox.js"
 
 echo "== post-merge preserves custom --prefix =="
 REPO2=$(fixture_repo "t15-prefix")
@@ -88,7 +88,7 @@ cp -r "$ROOT/adapters" "$REPO2/adapters"
 cp "$ROOT/install.sh" "$REPO2/install.sh"
 (cd "$REPO2" && git add -A && git commit -q -m "chore: add source tree")
 
-bash "$REPO2/install.sh" --target "$REPO2" --prefix .custom --with-codex >/dev/null 2>&1
+bash "$REPO2/install.sh" --target "$REPO2" --prefix .custom >/dev/null 2>&1
 GIT_COMMON2=$(git -C "$REPO2" rev-parse --git-common-dir 2>/dev/null)
 case "$GIT_COMMON2" in
   /*|[A-Za-z]:*) ;;
@@ -102,7 +102,7 @@ echo "prefix" > "$REPO2/prefix.txt"
 (cd "$REPO2" && git add prefix.txt && git commit -q -m "feat: prefix")
 (cd "$REPO2" && git checkout -q main && git merge -q feat-prefix --no-edit)
 wait_for_file_not_contains "$REPO2/.custom/sandbox/core/lib/heartbeat.sh" "TAMPERED" || true
-wait_for_file "$REPO2/.custom/sandbox/adapters/codex/hooks/session-start.sh" || true
+wait_for_file "$REPO2/.custom/sandbox/adapters/opencode/plugins/worktree-sandbox.js" || true
 
 AFTER_PREFIX=$(head -1 "$REPO2/.custom/sandbox/core/lib/heartbeat.sh")
 assert_not_contains "custom-prefix install restored tampered file" "TAMPERED" "$AFTER_PREFIX"

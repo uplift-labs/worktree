@@ -66,7 +66,7 @@ assert_eq "branch absent after unskipped sweep" "" "$(git -C "$REPO" branch --li
 
 echo "== sweep_residual_dirs =="
 REPO=$(fixture_repo "d")
-RES="$REPO/.claude/worktrees"
+RES="$REPO/.custom/worktrees"
 mkdir -p "$RES/empty-shell" "$RES/with-files"
 echo "x" > "$RES/with-files/data.txt"
 out=$(sb_wt_sweep_residual_dirs "$RES")

@@ -1,6 +1,6 @@
 #!/bin/bash
 # test-cleanup-phase2-initial-head.sh — regression for Bug B
-# (plan C:/Users/Sergey/.claude/plans/sandbox-ghost-worktree-fix.md).
+# Regression coverage for empty-session cleanup with marker initial_head.
 #
 # Bug: sandbox-cleanup.sh Phase 2 self-release used to drop the marker for
 # any fresh session because a branch that never diverged is trivially

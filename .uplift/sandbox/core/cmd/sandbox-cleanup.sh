@@ -19,7 +19,7 @@
 #      worktree if marker was dropped, plus any other stale sandboxes).
 #
 # Callers:
-#   - adapters/claude-code/hooks/session-end.sh (graceful exit)
+#   - OpenCode session deletion and process-exit cleanup paths
 #   - core/lib/heartbeat.sh (parent-death cleanup)
 #
 # Exit: always 0 (fail-open). Diagnostic output on stderr.

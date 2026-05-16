@@ -25,9 +25,8 @@ check_usage "sandbox-cleanup --repo" bash "$ROOT/core/cmd/sandbox-cleanup.sh" --
 check_usage "sandbox-merge-gate --worktree" bash "$ROOT/core/cmd/sandbox-merge-gate.sh" --worktree
 check_usage "reflection-rescue --repo" bash "$ROOT/core/cmd/reflection-rescue.sh" --repo
 
-echo "== installer/launcher missing flag values =="
+echo "== installer missing flag values =="
 check_usage "install --target" bash "$ROOT/install.sh" --target
 check_usage "remote-install --ref" bash "$ROOT/remote-install.sh" --ref
-check_usage "codex-sandbox --repo" bash "$ROOT/adapters/codex/bin/codex-sandbox.sh" --repo
 
 test_summary

@@ -11,8 +11,8 @@ trap fixture_cleanup EXIT
 
 REPO=$(fixture_repo "t24")
 
-echo "== install --with-opencode populates adapter and project plugin =="
-OUT=$(bash "$ROOT/install.sh" --target "$REPO" --with-opencode 2>&1)
+echo "== install populates OpenCode adapter and project plugin by default =="
+OUT=$(bash "$ROOT/install.sh" --target "$REPO" 2>&1)
 ec=$?
 assert_exit "install exits 0" 0 "$ec"
 assert_dir_absent "opencode legacy bin not installed" "$REPO/.uplift/sandbox/adapters/opencode/bin"
@@ -35,7 +35,7 @@ printf 'stale\n' > "$REPO/.uplift/sandbox/adapters/opencode/tui/stale.tsx"
 mkdir -p "$REPO/.uplift/sandbox/adapters/opencode/bin" "$REPO/.uplift/sandbox/adapters/opencode/lib"
 printf 'stale\n' > "$REPO/.uplift/sandbox/adapters/opencode/bin/stale.sh"
 printf 'stale\n' > "$REPO/.uplift/sandbox/adapters/opencode/lib/layout.sh"
-OUT=$(bash "$ROOT/install.sh" --target "$REPO" --with-opencode 2>&1)
+OUT=$(bash "$ROOT/install.sh" --target "$REPO" 2>&1)
 ec=$?
 assert_exit "re-install exits 0" 0 "$ec"
 assert_file_absent "stale adapter plugin removed" "$REPO/.uplift/sandbox/adapters/opencode/plugins/stale.js"
@@ -102,9 +102,8 @@ assert_exit "opencode os sandbox reinstall exits 0" 0 "$ec"
 OS_PLUGIN_COUNT=$(grep -o '"opencode-sandbox"' "$REPO/opencode.json" | wc -l | tr -d '[:space:]')
 assert_eq "opencode-sandbox plugin not duplicated" "1" "$OS_PLUGIN_COUNT"
 
-echo "== post-merge hook preserves --with-opencode flag =="
+echo "== post-merge hook preserves OpenCode optional flags =="
 GIT_COMMON=$(git -C "$REPO" rev-parse --git-common-dir)
-assert_contains "post-merge detects opencode" "--with-opencode" "$(cat "$REPO/$GIT_COMMON/hooks/post-merge")"
 assert_contains "post-merge detects opencode os sandbox" "--with-opencode-os-sandbox" "$(cat "$REPO/$GIT_COMMON/hooks/post-merge")"
 
 test_summary

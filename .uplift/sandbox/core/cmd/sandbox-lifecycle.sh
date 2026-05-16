@@ -83,7 +83,7 @@ _sb_hb_is_session_alive() {
     return 1  # monitored parent dead
   fi
 
-  # Field 2: Windows PID of parent claude.exe (MSYS --parent-winpid mode).
+  # Field 2: Windows PID of the owner process (MSYS --parent-winpid mode).
   if [ -n "$_parent_wp" ] && [ "$_parent_wp" != "0" ]; then
     # On non-Windows, tasklist is absent → can't verify → assume alive.
     if ! command -v tasklist >/dev/null 2>&1; then
@@ -292,8 +292,8 @@ fi
 # reap a live session that simply hasn't started committing yet.
 #
 # Safety: skip branches in mid-rebase / mid-merge / detached-HEAD state —
-# mirrors the `_can_commit` guard in adapters/claude-code/hooks/session-end.sh
-# to avoid reaping a worktree during conflict resolution.
+# mirrors the `_can_commit` guard in sandbox-cleanup.sh to avoid reaping a
+# worktree during conflict resolution.
 # Legacy markers (no initial_head field) → skip, fall back to TTL (Phase 2).
 if [ -d "$MARKERS_DIR" ] && [ -n "$MAIN_BRANCH" ]; then
   for mf in "$MARKERS_DIR"/*; do

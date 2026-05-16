@@ -2,7 +2,7 @@
 # remote-install.sh — fetch worktree-sandbox and install into the current repo.
 #
 # Usage:
-#   bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/main/remote-install.sh) [--ref <git-ref>] [--prefix <dir>] [--with-claude-code] [--with-codex] [--with-opencode] [--with-opencode-permissions] [--with-opencode-os-sandbox]
+#   bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/main/remote-install.sh) [--ref <git-ref>] [--prefix <dir>] [--with-opencode-permissions] [--with-opencode-os-sandbox]
 #
 # Clones the repo into a temp directory, runs install.sh with forwarded args,
 # and removes the temp directory. Requires git and curl/bash.

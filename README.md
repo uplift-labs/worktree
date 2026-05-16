@@ -4,51 +4,38 @@
 
 > **This is a personal pet project. Use at your own risk.**
 
-Git worktree isolation and automatic cleanup for AI-assisted development sessions. Keeps `main` untouched. Cleans up after itself. Core runtime has zero dependencies beyond `bash` and `git`.
+Git worktree isolation and automatic cleanup for OpenCode sessions. Keeps `main` untouched, routes supported OpenCode tools into a session worktree, and cleans up stale sandboxes. Core runtime has zero dependencies beyond `bash` and `git`.
 
 ## Quickstart
 
-Install into your project with Claude Code:
+Install into your project:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh) --with-claude-code
-```
-
-Or install for Codex CLI:
-
-```bash
-bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh) --with-codex
-bash .uplift/sandbox/adapters/codex/bin/codex-sandbox.sh
-```
-
-Or install for OpenCode:
-
-```bash
-bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh) --with-opencode
+bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh)
 opencode
 ```
 
-Or add conservative native OpenCode permission defaults as well:
+Optional native OpenCode permission defaults:
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh) --with-opencode-permissions
 opencode
 ```
 
-Or add OS-level sandboxing for OpenCode `bash` commands on macOS/Linux:
+Optional OS-level sandboxing for OpenCode `bash` commands on macOS/Linux:
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh) --with-opencode-os-sandbox
 opencode
 ```
 
-That's it. Your repo now has sandbox isolation. Every session gets its own worktree, `main` is protected by a merge gate, and stale sandboxes clean themselves up.
+That's it. Your repo now has OpenCode sandbox isolation. Every OpenCode session gets its own worktree, `main` is protected by a merge gate, and stale sandboxes clean themselves up.
 
 <details>
-<summary>Manual usage (after install)</summary>
+<summary>Manual core usage</summary>
 
 ```bash
-# Create a sandbox (from main)
+# Create a sandbox from main
 bash .uplift/sandbox/core/cmd/sandbox-init.sh \
   --repo "$PWD" \
   --session demo \
@@ -59,11 +46,11 @@ cd .uplift/sandbox/worktrees/wt-demo
 echo "hello" > feature.txt
 git add feature.txt && git commit -m "feat: add feature"
 
-# Merge back (pre-merge-commit hook validates cleanliness)
+# Merge back when ready
 cd /path/to/repo
 git merge wt-demo
 
-# Clean up (automatic on next session start, or manual)
+# Clean up stale completed worktrees
 bash .uplift/sandbox/core/cmd/sandbox-lifecycle.sh \
   --repo "$PWD" \
   --worktrees-dir .uplift/sandbox/worktrees
@@ -71,252 +58,131 @@ bash .uplift/sandbox/core/cmd/sandbox-lifecycle.sh \
 
 </details>
 
-## The problem
+## The Problem
 
-AI coding assistants (Claude Code, Cursor, Copilot Workspace, etc.) operate inside your git repository. Without guardrails, two things go wrong repeatedly:
+AI coding agents operate inside your git repository. Without guardrails, two things go wrong repeatedly:
 
-1. **Main branch contamination.** The assistant edits files directly on `main`, leaving half-finished work in the primary branch. A careless `git push` ships broken code. Reverting requires manual archaeology through uncommitted changes, staged hunks, and new files.
+1. **Main branch contamination.** The agent edits files directly on `main`, leaving half-finished work in the primary branch.
+2. **Abandoned state accumulates.** Crashed or force-quit sessions leave stale worktrees, orphan branches, and marker files behind.
 
-2. **Abandoned state accumulates.** Every crashed session, lost connection, or force-quit leaves behind stale worktrees, orphan branches, and marker files. After a few weeks of active use, `git branch` returns dozens of dead `session-*` branches, and sandbox worktree directories are full of state nobody remembers.
+## How It Works
 
-These aren't theoretical — they happen in every team that gives an AI agent write access to a real repo.
-
-## How worktree-sandbox solves this
-
-The tool creates a disposable **git worktree** for each session, enforces a **merge gate** before anything reaches `main`, and runs **automatic cleanup** of everything that's no longer needed.
+The tool creates a disposable **git worktree** for each OpenCode session, enforces a **merge gate** before anything reaches `main`, and runs **automatic cleanup** of stale state.
 
 ```
-main (protected)          wt-abc123… (worktree)
-│                         │
-│  ┌─── merge gate ───┐   │  AI works here freely
-│  │ uncommitted work? │◄─┤  - edits, commits, experiments
-│  │ → block merge     │  │  - main is never touched
-│  │ clean?            │  │
-│  │ → allow merge     │  │
-│  └───────────────────┘  │
-│                         │
-▼                         ▼
-after merge: lifecycle auto-removes the worktree, branch, and markers
+main (protected)          wt-abc123... (worktree)
+|                         |
+|  merge gate             |  OpenCode tools run here
+|  - dirty? block         |  - edits, commits, experiments
+|  - clean? allow         |  - main is never edited directly
+|                         |
+v                         v
+after merge: lifecycle removes merged clean worktrees, branches, and markers
 ```
 
-**Three guarantees:**
+Three guarantees:
 
-- **Isolation.** Every session gets its own worktree branched from `main`. The assistant physically cannot edit files in the main working tree (enforced by a path gate on every Edit/Write).
-- **No data loss.** Merged and clean sandboxes are reaped. Dirty or unmerged sandboxes are preserved — even if the session crashed and never called cleanup. Uncommitted work stays on disk until the user deals with it.
-- **No accumulation.** TTL-expired markers, merged branches, orphan branches, and empty directories are cleaned up automatically on every session start. Nothing piles up.
+- **Isolation.** Every OpenCode session gets its own worktree branched from `main`; supported OpenCode tools are routed into that worktree.
+- **No data loss.** Dirty or unmerged sandboxes are preserved. Cleanup only removes merged clean worktrees or stale empty state.
+- **No accumulation.** TTL-expired markers, merged branches, orphan branches, and empty directories are cleaned automatically on session start and cleanup paths.
 
 ## Architecture
 
 ```
 worktree-sandbox/
 ├── core/
-│   ├── cmd/         ← public CLI (stable contract)
-│   │   ├── sandbox-init.sh
-│   │   ├── sandbox-guard.sh
-│   │   ├── sandbox-lifecycle.sh
-│   │   ├── sandbox-cleanup.sh
-│   │   ├── sandbox-merge-gate.sh
-│   │   └── reflection-rescue.sh
-│   └── lib/         ← internal helpers (not public API)
-│       └── json-merge.py  ← idempotent settings.json merger
+│   ├── cmd/         public CLI scripts
+│   └── lib/         internal shell helpers
 ├── adapters/
-│   ├── claude-code/ ← Claude Code hook translation layer
-│   ├── codex/       ← Codex hook wrappers + launcher
-│   └── opencode/    ← OpenCode project + TUI plugins
+│   └── opencode/    OpenCode server + TUI plugins
 └── install.sh
 ```
 
-### Two-layer design
+`core/` is the stable contract. CLI flags in, human-readable text out, fixed exit codes: `0` allow/success, `1` deny/failure with reason, `2` bad usage. Full spec lives in [`CONTRACT.md`](CONTRACT.md).
 
-- **`core/`** is the contract. CLI flags in, human-readable text out, fixed exit codes (`0` = allow, `1` = deny, `2` = bad usage). Tool-agnostic — knows nothing about Claude Code, Cursor, or any specific host. Full spec in [`CONTRACT.md`](CONTRACT.md).
-- **`adapters/`** are translators. Each adapter is ~30-50 lines per hook: read the host's native input (JSON, env vars, hook args), call a `core/cmd/*` script, translate the result back. Adding support for a new tool means writing a new adapter, never touching `core/`.
+`adapters/opencode/` is the OpenCode integration. It translates OpenCode plugin hooks into calls to `core/cmd/*` and handles in-process tool path routing.
 
-### State management
-
-State lives in two places, both TTL-managed:
-
-1. **Markers** — one small file per session at `<git-common-dir>/sandbox-markers/<safe-session-id>`. Session ids are sanitized to `[A-Za-z0-9-]` for marker filenames. Contains branch name, creation epoch, and initial HEAD. A background **heartbeat** process touches the marker every second while the session is alive.
-2. **Worktrees** — by default at `<repo>/.sandbox/worktrees/<branch-name>` when running from the source tree; installed adapters pass `<repo>/.uplift/sandbox/worktrees/<branch-name>`. Standard git worktrees, created by `sandbox-init`, cleaned by `sandbox-lifecycle`.
-
-### Fail-open policy
-
-All `core/cmd/` scripts exit `0` silently when git context can't be resolved (not a repo, detached HEAD, etc.). A broken install must never block your workflow. These are safety nets, not gatekeepers.
+Installed copies live under `.uplift/sandbox/`; project-local OpenCode plugin files live under `.opencode/`. Root `core/` and `adapters/opencode/` are the source of truth.
 
 ## Install
 
-**One-liner (remote):**
+Remote install:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh) --with-claude-code
+bash <(curl -sSL https://raw.githubusercontent.com/uplift-labs/worktree-sandbox/v1.1.0/remote-install.sh)
 ```
 
 `remote-install.sh` clones the same release by default (`v1.1.0`). For testing another branch or tag, pass `--ref <git-ref>` or set `WORKTREE_SANDBOX_REF`.
 
-**From a local clone:**
+Local install:
 
 ```bash
 git clone https://github.com/uplift-labs/worktree-sandbox
-bash worktree-sandbox/install.sh --with-claude-code
-bash worktree-sandbox/install.sh --with-codex
-bash worktree-sandbox/install.sh --with-opencode
-bash worktree-sandbox/install.sh --with-opencode-os-sandbox
+bash worktree-sandbox/install.sh --target /path/to/repo
 ```
 
-Installs `core/` to `.uplift/sandbox/core/`, wires `pre-merge-commit` + `post-merge` git hooks, and ignores only `.uplift/sandbox/worktrees/`. With `--with-claude-code`, the adapter goes to `.uplift/sandbox/adapter/` and its hook config is merged into `.claude/settings.json` (requires `python3`). With `--with-codex`, the adapter goes to `.uplift/sandbox/adapters/codex/`, hooks are merged into `.codex/hooks.json`, and `features.codex_hooks = true` is enabled in `.codex/config.toml`. With `--with-opencode`, the adapter goes to `.uplift/sandbox/adapters/opencode/`, project-local plugins are written to `.opencode/plugins/` and `.opencode/tui-plugins/`, and normal `opencode` launches create sandbox sessions through plugin hooks. With `--with-opencode-permissions`, `--with-opencode` is implied and conservative native OpenCode permission defaults are merged into `opencode.json` (requires `python3`). With `--with-opencode-os-sandbox`, `--with-opencode` is implied and the external `opencode-sandbox` npm plugin is added to `opencode.json` (requires `python3`).
+The installer copies `core/` to `.uplift/sandbox/core/`, copies the OpenCode adapter to `.uplift/sandbox/adapters/opencode/`, writes project-local plugins to `.opencode/plugins/` and `.opencode/tui-plugins/`, registers the TUI plugin in `.opencode/tui.json`, wires `pre-merge-commit` and `post-merge` git hooks, and ignores `.uplift/sandbox/worktrees/`.
 
-Re-running is safe (idempotent). The `post-merge` hook auto-syncs `.uplift/sandbox/` on every merge and preserves installed adapter flags.
+Re-running is safe. The `post-merge` hook re-runs `install.sh` in the background after every merge so installed copies stay in sync with source.
 
-## CLI reference
+## OpenCode Adapter
 
-Six public commands. Full contract in [`CONTRACT.md`](CONTRACT.md).
-
-| Command | Purpose |
-|---|---|
-| `sandbox-init.sh` | Create a session sandbox worktree branched from main. |
-| `sandbox-guard.sh` | Path gate: allow or deny an edit based on active sandbox location. |
-| `sandbox-lifecycle.sh` | Periodic cleanup: merged worktrees, stale markers, orphan branches, residual dirs. |
-| `sandbox-cleanup.sh` | Session cleanup: capture-commit + self-release + lifecycle. Called by session-end and heartbeat. |
-| `sandbox-merge-gate.sh` | Pre-merge validation: block if worktree has uncommitted changes. |
-| `reflection-rescue.sh` | Best-effort rescue for Markdown sidecar files stranded inside preserved sandbox worktrees. |
-
-## Adapters
-
-### Claude Code
-
-The Claude Code adapter (`adapters/claude-code/`) wires four hooks:
-
-| Hook | What it does |
-|---|---|
-| **SessionStart** | Runs lifecycle (cleans prior sessions), creates sandbox, launches heartbeat. On compact restart: re-emits banner, skips init. |
-| **PreToolUse** | Enforces that Edit/Write targets the sandbox worktree, not main. |
-| **Stop** | Per-turn heartbeat: touches marker so lifecycle treats session as live. No merge, no cleanup, no blocking. |
-| **SessionEnd** | On real exit: kills heartbeat, capture-commits pending work, runs lifecycle. On `/clear` or `/compact`: heartbeat only. Never merges — that's the user's choice. |
-
-### Codex CLI
-
-The Codex adapter (`adapters/codex/`) has a recommended launcher plus lifecycle hooks:
+The OpenCode adapter is plugin-first:
 
 | Component | What it does |
 |---|---|
-| `codex-sandbox.sh` | Creates the sandbox before Codex starts, runs `codex -C <sandbox>`, exports `CODEX_SANDBOX_*` env vars for hooks, and calls cleanup when Codex exits. |
-| **SessionStart** | Runs lifecycle, creates a sandbox in hook-only mode, or reinforces the launcher-created sandbox via additional context. |
-| **PreToolUse** | Blocks supported write tools, including `apply_patch`, when they run from the main repo while the session owns a sandbox. |
-| **Stop** | Returns Codex `{"continue":true}` and refreshes marker mtime. |
+| Server plugin | Loads from `.opencode/plugins/`, creates or detects a session sandbox, injects system context, waits for sandbox readiness before supported tool execution, maps supported tool paths into the sandbox, blocks explicit main-repo write targets, refreshes markers, and schedules cleanup on `session.deleted` or process exit. |
+| TUI plugin | Loads from `.opencode/tui.json`, adds a right-sidebar `Sandbox Modified Files` list from the sandbox git diff, watches the sandbox git `HEAD` for branch changes, and polls as a fallback. |
 
-Codex currently has no `SessionEnd` hook equivalent to Claude Code. Use the launcher for the strongest guarantee; hook-only mode is a fallback that adds context and blocks supported write tools but cannot change Codex's process cwd after startup.
+OpenCode does not expose a pre-bootstrap hook that mutates its internal project root, so the plugin virtualizes supported tool paths into the sandbox. OpenCode's own footer/status may still show the original repo and branch; trust `OPENCODE_SANDBOX_WORKTREE`, tool working dirs, or `git status` run by the tool for active sandbox state.
 
-### OpenCode
+The TUI plugin reads the session sandbox worktree from `OPENCODE_SANDBOX_WORKTREE` or the session marker. Tune fallback polling with `AISB_OPENCODE_BRANCH_REFRESH_MS`, `AISB_OPENCODE_FILES_REFRESH_MS`, and `AISB_OPENCODE_GIT_TIMEOUT_MS`. Enable debug logs with `AISB_OPENCODE_BRANCH_DEBUG=1` or `AISB_OPENCODE_FILES_DEBUG=1`.
 
-The OpenCode adapter (`adapters/opencode/`) is plugin-first:
+Optional native permission hardening is available with `--with-opencode-permissions`. It preserves existing user rules and only adds missing defaults: `external_directory` and `doom_loop` ask, `.env` reads are denied while `.env.example` remains allowed, and obviously destructive `bash` patterns such as hard resets, force pushes, and `rm -rf *` are denied.
 
-| Component | What it does |
-|---|---|
-| Plugin | Loads automatically from `.opencode/plugins/`, schedules sandbox detection/creation on `session.created` or the first session-aware hook without blocking the first LLM request, injects system context, waits for the sandbox before supported tool execution, passes sandbox env vars to shell tools, maps supported built-in tools to the sandbox, blocks explicit main-repo write targets in-process, refreshes markers asynchronously, and schedules cleanup on `session.deleted` or process exit. |
-| TUI plugin | Loads from `.opencode/tui.json`, adds a right-sidebar `Sandbox Modified Files` list from the real sandbox git diff, watches the worktree's real git `HEAD` for branch changes, and keeps async polling as a fallback for sandbox file changes. The branch badge is disabled by default because OpenCode already renders the current branch in its footer. |
-
-After `--with-opencode`, run `opencode` as usual. OpenCode does not expose a pre-bootstrap hook that mutates its internal project root, so the plugin virtualizes supported tool paths into the sandbox. Sandbox detection and creation run asynchronously so the first prompt can move into the chat workspace promptly; the first supported tool call waits for the sandbox before touching files. OpenCode's own footer/status may still show the original repo and branch; trust `OPENCODE_SANDBOX_WORKTREE`, tool working dirs, or `git status` run by the tool for the active sandbox state.
-
-The OpenCode server plugin uses the current default plugin object shape with id `uplift.worktree-sandbox`, plus a named `WorktreeSandbox` export for smoke tests and compatibility. It logs meaningful bootstrap, block, and cleanup diagnostics through OpenCode's structured `client.app.log()` API when available; logging failures are ignored and never affect guard decisions.
-
-The TUI plugin resolves the session sandbox worktree from `OPENCODE_SANDBOX_WORKTREE` or the session marker asynchronously, then watches the resolved worktree git `HEAD` path. `git switch` normally updates immediately through the file watcher; polling remains as a fallback for missed branch events. The sidebar file list reads committed changes on the current sandbox branch relative to its merge-base with `main`/`master`, plus staged, unstaged, and untracked files in the sandbox worktree. This keeps unrelated main-repo changes out of the sidebar, even when main has moved or been merged into the sandbox branch. File refreshes are debounced and use asynchronous git commands with a timeout so OpenCode's UI thread is not blocked after edits. Tune fallback polling with `AISB_OPENCODE_BRANCH_REFRESH_MS` (default `5000` ms while the watcher is active, `1000` ms without it), `AISB_OPENCODE_FILES_REFRESH_MS` (default `2000` ms; set `0` to disable), and `AISB_OPENCODE_GIT_TIMEOUT_MS` (default `3000`). Enable the old prompt branch badge with `AISB_OPENCODE_BRANCH_BADGE=1`, disable branch watching with `AISB_OPENCODE_BRANCH_WATCH=0`, and enable debug logs with `AISB_OPENCODE_BRANCH_DEBUG=1` or `AISB_OPENCODE_FILES_DEBUG=1`.
-
-The built-in OpenCode `Modified Files` sidebar reads OpenCode's original project root. To avoid mutating OpenCode's internal plugin state during normal UI rendering, the TUI plugin no longer deactivates `internal:sidebar-files` by default. Set `AISB_OPENCODE_HIDE_BUILTIN_FILES=1` to restore the old behavior.
-
-Optional native permission hardening is available with `--with-opencode-permissions`. It preserves existing user rules and only adds missing defaults: `external_directory` and `doom_loop` ask, `.env` reads are denied while `.env.example` remains allowed, and obviously destructive `bash` patterns such as `git reset --hard*`, force pushes, and `rm -rf *` are denied. This is intentionally opt-in because worktree routing already protects supported tools and some teams prefer less permission friction.
-
-Optional OS-level sandboxing is available with `--with-opencode-os-sandbox`. This does not replace worktree isolation; it adds the community `opencode-sandbox` npm plugin so OpenCode `bash` tool calls are wrapped by `@anthropic-ai/sandbox-runtime`. On macOS this uses Seatbelt / `sandbox-exec`; on Linux it uses `bubblewrap` plus runtime helpers; on Windows it is unsupported and commands pass through unsandboxed.
+Optional OS-level sandboxing is available with `--with-opencode-os-sandbox`. This adds the community `opencode-sandbox` npm plugin so OpenCode `bash` tool calls are wrapped by `@anthropic-ai/sandbox-runtime` on supported platforms. It does not replace worktree isolation.
 
 OpenCode compatibility checklist: do not run with `OPENCODE_PURE=1` when verifying the adapter because pure mode skips project plugins; re-run `bash tests/run.sh tests/e2e/t23-opencode-adapter-smoke.sh` after OpenCode upgrades; recheck server hooks `event`, `tool.execute.before`, `shell.env`, `tool.definition`, and `experimental.chat.system.transform`; recheck TUI event names such as `session.status`, `file.edited`, `vcs.branch.updated`, and `session.next.*` if OpenCode changes its event bus.
 
-### Git hooks
+## Git Hooks
 
 Installed automatically by `install.sh`:
 
 | Hook | Purpose |
 |---|---|
-| `pre-merge-commit` | Blocks merge if the sandbox worktree has tracked modifications or untracked files. |
-| `post-merge` | Re-runs `install.sh` in background after every merge to keep `.uplift/sandbox/` in sync. |
+| `pre-merge-commit` | Blocks merge if the sandbox worktree being merged has tracked modifications or untracked files. |
+| `post-merge` | Re-runs `install.sh` in the background after every merge to keep `.uplift/sandbox/` and `.opencode/` in sync. |
 
-### Writing a new adapter
+## CLI Reference
 
-A new adapter is ~30-50 lines per hook: read host input → extract session ID and file path → call `core/cmd/*` with CLI flags → translate exit code + stdout into the host's decision format. No changes to `core/` required.
-
-## Sandbox lifecycle
-
-A sandbox goes through a predictable lifecycle. Understanding it prevents subtle bugs (premature cleanup, lost work on `/clear`, ghost CWDs after merge).
-
-### Phase A — Create
-
-`session-start.sh` runs on every session start. On a **compact restart**, it re-emits the banner and exits (no init, no lifecycle). On a **normal start**, it runs `sandbox-lifecycle` first (cleans prior sessions), then `sandbox-init`.
-
-**Invariant:** exactly one marker, one branch, one worktree per session.
-
-### Phase B — Live session
-
-`stop.sh` runs after every agent turn. Its only job: touch the marker to keep the TTL fresh. No merge, no cleanup.
-
-### Phase C — Session end
-
-For Claude Code, `session-end.sh` runs on termination (`/exit`, Ctrl+C/D, terminal close, logout). On real exit: (1) kill heartbeat, (2) stage + commit pending work, (3) run lifecycle. On `/clear` or `/compact`: heartbeat only. For Codex CLI, `codex-sandbox.sh` performs the equivalent cleanup when the launched `codex` process exits. For OpenCode, the project plugin cleanup runs on `session.deleted` and process exit.
-
-**SessionEnd never merges into main.** The user merges when ready.
-
-### Phase D — Compact restart
-
-`/compact` ends the process but the session continues. Both session-end and session-start treat this as a no-op: heartbeat only. One `session_id` maps to one sandbox across any number of compact cycles.
-
-### Phase E — Safety net
-
-Windows can't guarantee SIGHUP delivery. Sessions can be killed by OOM, power loss, or `kill -9`. The TTL safety net in `sandbox-lifecycle` catches everything that SessionEnd missed:
-
-1. **Reflection rescue** — copy configured Markdown sidecar files from preserved sandbox worktrees back into main, then remove duplicate worktree copies.
-2. `git worktree prune` — drop metadata for manually-removed worktrees.
-3. **TTL reclaim** — delete markers whose mtime exceeds TTL. Sessions that never committed get an extended 5-minute TTL to protect live sessions with dead heartbeats.
-4. **Proactive release** — drop markers for sandboxes already merged+clean, even if TTL hasn't expired.
-5. **Clean merged worktrees** — remove worktrees whose branch is an ancestor of main and has no uncommitted work. Marker-protected branches are skipped.
-6. **Orphan branch sweep** — delete `wt-*` branches that no worktree references and are ancestors of main.
-7. **Residual dir sweep** — remove empty worktree directories.
-
-### What happens in each scenario
-
-| Scenario | Marker | Branch | Worktree | Work |
-|---|---|---|---|---|
-| Live session, heartbeat fresh | kept | kept | kept | keeps running |
-| Clean exit, not yet merged | kept (fresh) | kept (unmerged) | kept | captured to branch, user merges when ready |
-| User merges after exit | next TTL prune | reaped next lifecycle | reaped next lifecycle | in main |
-| Crash, uncommitted changes | TTL prune | kept (unmerged) | kept (dirty) | **preserved on disk** — user recovers manually |
-| Crash, no uncommitted changes | TTL prune | reaped if ancestor of main | reaped if clean | nothing to lose |
-
-### Squash/rebase caveat
-
-Lifecycle's "merged" check uses `git merge-base --is-ancestor`. Squash-merged or rebase-merged branches are not detected as ancestors. Delete them manually or rely on the orphan branch sweep (Phase 5) if the original commits are in main.
+| Command | Purpose |
+|---|---|
+| `sandbox-init.sh` | Create a session sandbox worktree branched from `main` or `master`. |
+| `sandbox-guard.sh` | Path gate: allow or deny an edit based on active sandbox location. |
+| `sandbox-lifecycle.sh` | Cleanup merged worktrees, stale markers, orphan branches, and residual dirs. |
+| `sandbox-cleanup.sh` | Session cleanup: capture-commit pending work, self-release merged clean marker, then run lifecycle. |
+| `sandbox-merge-gate.sh` | Pre-merge validation: block if the sandbox worktree has uncommitted changes. |
+| `reflection-rescue.sh` | Best-effort rescue for Markdown sidecar files stranded inside preserved sandbox worktrees. |
 
 ## Testing
 
 ```bash
-bash tests/run.sh               # all (unit + e2e)
+bash tests/run.sh               # all tests
 bash tests/run.sh unit          # unit only
 bash tests/run.sh e2e           # e2e only
-bash tests/run.sh tests/e2e/t01-happy-path.sh   # single file
+bash tests/run.sh tests/e2e/t23-opencode-adapter-smoke.sh
 ```
 
-37 test files (14 unit + 23 e2e) covering all core commands and adapter hooks. All tests create real temporary git repos via `mktemp -d` + `git init`. No mocks.
+Tests cover core commands, lifecycle behavior, installer behavior, and the OpenCode adapter. Test files create real temporary git repositories via `mktemp -d` and `git init`.
 
-## Platform support
+## Platform Support
 
 | Platform | Status |
 |---|---|
-| Windows (Git Bash / MSYS) | Fully supported. Windows-specific code handles PID resolution via `wmic`, path normalization via `cygpath`, and `nohup` workarounds. |
-| Linux | TBD |
-| macOS | TBD |
-| Windows (WSL) | TBD |
-| Windows (PowerShell native) | Not supported. No port planned. |
-
-## Why bash?
-
-- **Zero dependencies.** `bash` and `git` exist everywhere the target audience works.
-- **Git hooks are bash anyway.** One language, one translation layer, no build step.
-- **Small surface area.** The entire public CLI is ~800 lines, lint-clean under `shellcheck`. A rewrite in a compiled language would add install friction without changing capability.
+| Windows (Git Bash / MSYS) | Supported. Windows-specific code handles PID checks, path normalization, and background process quirks. |
+| Linux | Supported by the shell runtime; OS-level sandbox option depends on platform helpers. |
+| macOS | Supported by the shell runtime; OS-level sandbox option depends on platform helpers. |
+| Windows (PowerShell native) | Not supported. Use Git Bash or WSL. |
 
 ## License
 

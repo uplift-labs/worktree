@@ -1,13 +1,12 @@
 #!/bin/bash
 # heartbeat.sh — background PID monitor that keeps a marker file fresh.
 #
-# Launched by the session-start adapter hook, this script runs as a detached
-# background process. It touches the marker file every INTERVAL seconds while
-# the target PID (Claude Code) is alive. When the PID dies, the heartbeat
-# invokes sandbox-cleanup.sh for immediate session cleanup (capture-commit +
+# Launched by the OpenCode plugin, this script runs as a detached background
+# process. It touches the marker file every INTERVAL seconds while the owning
+# process is alive. When the owner dies, the heartbeat invokes
+# sandbox-cleanup.sh for immediate session cleanup (capture-commit +
 # self-release + lifecycle), then exits. If --repo / --sandbox-root are not
-# provided, falls back to legacy behavior: mtime freezes and lifecycle's TTL
-# reclaim picks it up on the next SessionStart.
+# provided, mtime freezes and lifecycle's TTL reclaim picks it up later.
 #
 # Marker-only mode (--pid 0 or omitted):
 #   On platforms where the parent PID is not observable (MSYS/Windows — $PPID
@@ -18,11 +17,10 @@
 #   never fires (crash, SIGKILL, power loss).
 #
 # Windows parent PID monitoring (--parent-winpid):
-#   On MSYS, the adapter resolves the Windows PID of the parent claude.exe
-#   process via wmic tree walk and passes it here. Heartbeat checks every
-#   WINPID_CHECK_EVERY ticks whether that native PID is still alive using
-#   wmic. When the PID disappears, heartbeat runs cleanup and exits — same
-#   as PID mode on Linux.
+#   On MSYS, the adapter may pass the native Windows PID of the owning process.
+#   Heartbeat checks every WINPID_CHECK_EVERY ticks whether that native PID is
+#   still alive using wmic. When the PID disappears, heartbeat runs cleanup and
+#   exits, same as PID mode on Linux.
 #
 # Usage:
 #   bash heartbeat.sh --pid <target-pid> --marker <marker-path> \
@@ -39,11 +37,10 @@
 #   lifecycle if cleanup is unavailable).  On signal exit (session-end.sh
 #   sends kill) or marker-gone exit, the sidecar is removed.  Field layout:
 #     $1 = heartbeat PID (used by session-end.sh to kill on clean shutdown)
-#     $2 = Windows PID of parent claude.exe (0 if not on MSYS or unresolved)
+#     $2 = Windows PID of owner process (0 if not on MSYS or unresolved)
 #     $3 = Unix PID being monitored via kill -0 (0 in marker-only mode)
 #   Lifecycle uses fields 2-3 to independently verify whether the owning
-#   Claude Code process is still alive, rather than trusting the heartbeat
-#   process alone.
+#   process is still alive, rather than trusting the heartbeat process alone.
 #
 # Exit conditions (all graceful):
 #   - Target PID dies (kill -0 fails) — PID mode only; triggers cleanup
@@ -70,7 +67,7 @@ REPO=""
 SANDBOX_ROOT=""
 WT_DIR=".sandbox/worktrees"
 BR_PREFIX="wt-*"
-OWNER_PROCESS_NAMES="claude.exe,claude-code.exe,claude-desktop.exe"
+OWNER_PROCESS_NAMES="opencode,opencode.exe,node,node.exe,bun,bun.exe"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -188,7 +185,7 @@ if [ "$_parent_died" = 1 ] && [ -n "$SANDBOX_ROOT" ] && [ -n "$REPO" ]; then
   . "$SANDBOX_ROOT/core/lib/cleanup-log.sh" 2>/dev/null || sb_cleanup_log() { :; }
 
   # Final sanity check: even if our specific parent-winpid was classified as
-  # dead, a live claude.exe anywhere in the system means this was likely a
+  # dead, a live owner process anywhere in the system means this was likely a
   # false-positive (wrong ancestor monitored, wmic race, etc.). Aborting
   # cleanup in that case trades a potential orphan worktree (bounded by
   # MAX_AGE safety valve, ~24h) for avoiding instant destruction of a live
@@ -211,7 +208,7 @@ if [ "$_parent_died" = 1 ] && [ -n "$SANDBOX_ROOT" ] && [ -n "$REPO" ]; then
   fi
 
   if [ "$_skip_cleanup" = 1 ]; then
-    sb_cleanup_log "$SANDBOX_ROOT" "SKIP" "$_session" "-" "heartbeat-sanity-live-claude-exe"
+    sb_cleanup_log "$SANDBOX_ROOT" "SKIP" "$_session" "-" "heartbeat-sanity-live-owner"
     # Drop the .hb sidecar so the (now-exiting) heartbeat doesn't look alive
     # to lifecycle. Keep the marker — session appears live to the owner.
     rm -f "$_hb_sidecar" 2>/dev/null || true

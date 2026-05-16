@@ -18,8 +18,8 @@
 #      (it is not this guard's business to gate foreign files).
 #
 # This command is deliberately path-only. It does not touch git history, branches,
-# or make any decisions about protected branch state. The Claude Code adapter or
-# git hook caller is responsible for wrapping this into their native deny format.
+# or make any decisions about protected branch state. The adapter or git hook
+# caller is responsible for wrapping this into its native deny format.
 #
 # Exit:
 #   0 = allow

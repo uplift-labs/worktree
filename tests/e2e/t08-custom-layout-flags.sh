@@ -2,7 +2,7 @@
 # t08 — --worktrees-dir and --branch-prefix flags (custom layout path).
 # Verifies that sandbox-init and sandbox-lifecycle honour non-default layout
 # so host projects with their own conventions (e.g.
-# .claude/worktrees/ + worktree-session-* naming) can delegate to the core
+# .custom/worktrees/ + worktree-session-* naming) can delegate to the core
 # without migrating existing worktrees.
 set -u
 SELF="$(cd "$(dirname "$0")" && pwd)"
@@ -15,7 +15,7 @@ trap fixture_cleanup EXIT
 
 REPO=$(fixture_repo "t08")
 SESSION="t08-custom"
-CUSTOM_DIR=".claude/worktrees"
+CUSTOM_DIR=".custom/worktrees"
 CUSTOM_PREFIX="worktree-session"
 
 echo "== init honours --worktrees-dir and --branch-prefix =="

@@ -153,7 +153,6 @@ async function findSandboxRootAsync(repo) {
   if (envValue("OPENCODE_SANDBOX_ROOT")) candidates.push(envValue("OPENCODE_SANDBOX_ROOT"))
   if (repo) {
     candidates.push(path.join(repo, ".uplift", "sandbox"))
-    candidates.push(path.join(repo, ".sandbox"))
   }
 
   let cur = MODULE_DIR

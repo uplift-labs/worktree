@@ -29,20 +29,20 @@ echo "== heartbeat exits when parent WINPID dies =="
 M1="$MARKERS/winpid-die.marker"
 printf 'branch-wp1 %s abc123' "$(date +%s)" > "$M1"
 
-# Start a process to simulate claude.exe; get its WINPID.
+# Start a process to simulate an owner process; get its WINPID.
 sleep 300 &
-FAKE_CLAUDE_PID=$!
-FAKE_CLAUDE_WINPID=$(_winpid_of "$FAKE_CLAUDE_PID")
+FAKE_OWNER_PID=$!
+FAKE_OWNER_WINPID=$(_winpid_of "$FAKE_OWNER_PID")
 
-if [ -z "$FAKE_CLAUDE_WINPID" ]; then
+if [ -z "$FAKE_OWNER_WINPID" ]; then
   printf 'SKIP: cannot resolve WINPID from /proc — test not applicable\n'
-  kill "$FAKE_CLAUDE_PID" 2>/dev/null; wait "$FAKE_CLAUDE_PID" 2>/dev/null || true
+  kill "$FAKE_OWNER_PID" 2>/dev/null; wait "$FAKE_OWNER_PID" 2>/dev/null || true
   exit 0
 fi
 
 # Launch heartbeat with --parent-winpid.
 # Use WINPID_CHECK_EVERY=1 via short interval (check every tick for fast test).
-bash "$HB" --pid 0 --marker "$M1" --interval 1 --parent-winpid "$FAKE_CLAUDE_WINPID" &
+bash "$HB" --pid 0 --marker "$M1" --interval 1 --parent-winpid "$FAKE_OWNER_WINPID" &
 HB_PID=$!
 sleep 2
 
@@ -55,7 +55,7 @@ fi
 assert_eq "heartbeat alive while parent WINPID alive" "1" "$_alive_before"
 
 # Kill the fake parent.
-kill "$FAKE_CLAUDE_PID" 2>/dev/null; wait "$FAKE_CLAUDE_PID" 2>/dev/null || true
+kill "$FAKE_OWNER_PID" 2>/dev/null; wait "$FAKE_OWNER_PID" 2>/dev/null || true
 
 # Wait for heartbeat to detect death (WINPID_CHECK_EVERY=5 ticks * 1s + margin).
 sleep 8
