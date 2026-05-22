@@ -5,6 +5,7 @@ import test from "node:test"
 import { git, initRepo, nodeScript, tempDir } from "./helpers.ts"
 import { markerIsFresh, markerPath, markerReadInitialHead, markerReadValue, markerSafeId, markerWrite } from "../core/lib/ttl-marker.ts"
 import { scanUncommitted } from "../core/lib/scan-uncommitted.ts"
+import { spawnWorktrees } from "../core/lib/worktree-spawn.ts"
 
 test("marker helpers preserve contract fields", () => {
   const root = tempDir("marker")
@@ -52,6 +53,36 @@ test("sandbox init, guard, and merge gate run through TypeScript CLIs", () => {
   git(worktree, ["commit", "-m", "add dirty"])
   const cleanGate = nodeScript("core/cmd/sandbox-merge-gate.ts", ["--worktree", worktree])
   assert.equal(cleanGate.status, 0, cleanGate.stdout)
+})
+
+test("worktree spawn copies staged, unstaged, and untracked non-ignored state", () => {
+  const repo = initRepo("spawn-dirty")
+  fs.writeFileSync(path.join(repo, "tracked.txt"), "base\n", "utf8")
+  fs.writeFileSync(path.join(repo, ".gitignore"), "ignored.log\n", "utf8")
+  git(repo, ["add", "tracked.txt", ".gitignore"])
+  git(repo, ["commit", "-m", "add tracked"])
+
+  fs.writeFileSync(path.join(repo, "README.md"), "# staged\n", "utf8")
+  git(repo, ["add", "README.md"])
+  fs.writeFileSync(path.join(repo, "tracked.txt"), "unstaged\n", "utf8")
+  fs.writeFileSync(path.join(repo, "untracked.txt"), "untracked\n", "utf8")
+  fs.writeFileSync(path.join(repo, "ignored.log"), "ignored\n", "utf8")
+
+  const result = spawnWorktrees({ repo, printOnly: true })
+  assert.equal(result.worktrees.length, 1)
+  const worktree = result.worktrees[0].path
+
+  assert.equal(fs.readFileSync(path.join(worktree, "README.md"), "utf8").replace(/\r\n/g, "\n"), "# staged\n")
+  assert.equal(fs.readFileSync(path.join(worktree, "tracked.txt"), "utf8").replace(/\r\n/g, "\n"), "unstaged\n")
+  assert.equal(fs.readFileSync(path.join(worktree, "untracked.txt"), "utf8"), "untracked\n")
+  assert.equal(fs.existsSync(path.join(worktree, "ignored.log")), false)
+
+  const staged = git(worktree, ["diff", "--cached", "--name-only"])
+  assert.match(staged.stdout, /README\.md/)
+  const unstaged = git(worktree, ["diff", "--name-only"])
+  assert.match(unstaged.stdout, /tracked\.txt/)
+  const untracked = git(worktree, ["ls-files", "--others", "--exclude-standard"])
+  assert.match(untracked.stdout, /untracked\.txt/)
 })
 
 test("reflection rescue copies markdown sidecar files", () => {

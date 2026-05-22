@@ -4,6 +4,7 @@ import {
   acquireBuiltinFilesHidden,
   createBranchObserver,
   createChangedFilesObserver,
+  runWorktreeCommandAsync,
   resolveRenderableSandboxWorktreeAsync,
   resolveSandboxWorktreeAsync,
   shouldRunTuiPluginAsync,
@@ -44,6 +45,43 @@ function eventSessionID(event) {
 
 function errorMessage(error) {
   return error && typeof error === "object" && "message" in error ? String(error.message) : String(error)
+}
+
+function commandArgs(input) {
+  if (!input) return ""
+  if (typeof input === "string") return input
+  return input.arguments || input.args || input.query || input.value?.replace(/^\/?worktree\s*/, "") || ""
+}
+
+function summarizeWorktreeOutput(stdout, stderr) {
+  const text = String(stdout || stderr || "").trim()
+  if (!text) return "worktree command completed"
+  const lines = text.split(/\r?\n/).filter(Boolean)
+  return lines.slice(0, 6).join("\n")
+}
+
+function registerWorktreeCommand(api) {
+  if (!api.command?.register) return
+  api.command.register(() => [
+    {
+      title: "/worktree",
+      value: "worktree",
+      description: "Create git worktree tab(s). Supports -n N, --print, --no-dirty.",
+      category: "Worktree",
+      onSelect: async (input) => {
+        api.ui.toast({ variant: "info", message: "Creating worktree..." })
+        const result = await runWorktreeCommandAsync(MODULE_URL, {
+          directory: api.state.path.directory,
+          args: commandArgs(input),
+        })
+        api.ui.toast({
+          variant: result.status === 0 ? "success" : "warning",
+          message: summarizeWorktreeOutput(result.stdout, result.stderr),
+          duration: 8000,
+        })
+      },
+    },
+  ])
 }
 
 function BranchBadge(props) {
@@ -220,6 +258,8 @@ const tui = async (api) => {
       },
     })
   }
+
+  registerWorktreeCommand(api)
 
   api.slots.register({
     order: 490,

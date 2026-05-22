@@ -696,7 +696,7 @@ function readyBootstrap(cfg) {
 
 function bootstrapFor(sessionID, baseDirectory, log = null) {
   const raw = sessionID || state.currentSession
-  if (!raw || envValue("OPENCODE_SANDBOX_AUTO") === "0") return inactiveBootstrap()
+  if (!raw || envValue("OPENCODE_SANDBOX_AUTO") !== "1") return inactiveBootstrap()
 
   const session = sandboxSessionID(raw)
   const ready = state.sessions.get(session)

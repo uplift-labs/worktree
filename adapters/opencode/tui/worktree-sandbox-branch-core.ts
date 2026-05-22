@@ -66,6 +66,11 @@ type TuiApi = {
     deactivate?: (id: string) => Promise<boolean> | boolean
   }
 }
+export type WorktreeCommandResult = {
+  status: number
+  stdout: string
+  stderr: string
+}
 
 const DEFAULT_REFRESH_MS = 1000
 const WATCH_REFRESH_MS = 5000
@@ -205,6 +210,116 @@ export function tuiPluginID(moduleURL = ""): string {
   const file = moduleFilePath(moduleURL)
   if (!file) return TUI_PLUGIN_ID_PREFIX
   return `${TUI_PLUGIN_ID_PREFIX}.${hashString(normalizePathForCompare(file))}`
+}
+
+export async function runWorktreeCommandAsync(moduleURL: string, input: { directory?: string; args?: string } = {}): Promise<WorktreeCommandResult> {
+  const directory = input.directory || process.cwd()
+  const root = await findSandboxRootAsync(moduleURL, directory)
+  if (!root) return { status: 1, stdout: "", stderr: "worktree-sandbox core not found" }
+  const script = path.join(root, "core", "cmd", "worktree-spawn.ts")
+  const args = [script, "--repo", directory, "--worktrees-dir", worktreesDirFor(root, directory), "--branch-prefix", branchPrefix(process.env), ...parseWorktreeArgs(input.args || "")]
+  return execNodeAsync(args, root)
+}
+
+async function findSandboxRootAsync(moduleURL: string, directory: string): Promise<string> {
+  const candidates: string[] = []
+  const envRoot = envValue(process.env, "OPENCODE_SANDBOX_ROOT")
+  if (envRoot) candidates.push(envRoot)
+  const repo = resolveRepo(directory)
+  if (repo) candidates.push(path.join(repo, ".uplift", "sandbox"), repo)
+  let cur = path.dirname(moduleFilePath(moduleURL) || directory)
+  for (let i = 0; i < 8; i += 1) {
+    candidates.push(cur)
+    const next = path.dirname(cur)
+    if (next === cur) break
+    cur = next
+  }
+  for (const candidate of candidates) {
+    if (candidate && await pathExistsAsync(path.join(candidate, "core", "cmd", "worktree-spawn.ts"))) return candidate
+  }
+  return ""
+}
+
+function worktreesDirFor(root: string, directory: string): string {
+  const envDir = envValue(process.env, "OPENCODE_SANDBOX_WORKTREES_DIR") || envValue(process.env, "WORKTREE_SANDBOX_WORKTREES_DIR")
+  if (envDir) return envDir
+  const repo = resolveRepo(directory)
+  if (repo && isWithinPath(root, repo) && normalizePathForCompare(root) !== normalizePathForCompare(repo)) return `${toPosix(path.relative(repo, root))}/worktrees`
+  return ".sandbox/worktrees"
+}
+
+function branchPrefix(env: Env = process.env): string {
+  return envValue(env, "WORKTREE_SANDBOX_BRANCH_PREFIX") || envValue(env, "OPENCODE_SANDBOX_BRANCH_PREFIX") || "wt"
+}
+
+function parseWorktreeArgs(value: string): string[] {
+  const tokens = shellWords(value)
+  const args: string[] = []
+  for (let i = 0; i < tokens.length;) {
+    const token = tokens[i]
+    if (token === "-n" || token === "--count") {
+      const next = tokens[i + 1]
+      if (next) args.push("-n", next)
+      i += 2
+      continue
+    }
+    if (token.startsWith("-n=") || token.startsWith("--count=")) {
+      args.push("-n", token.slice(token.indexOf("=") + 1))
+      i += 1
+      continue
+    }
+    if (token === "--print" || token === "--no-dirty") args.push(token)
+    i += 1
+  }
+  return args
+}
+
+function shellWords(value: string): string[] {
+  const words: string[] = []
+  let current = ""
+  let quote = ""
+  for (let i = 0; i < value.length; i += 1) {
+    const char = value[i]
+    if (quote) {
+      if (char === quote) quote = ""
+      else current += char
+      continue
+    }
+    if (char === "'" || char === '"') {
+      quote = char
+      continue
+    }
+    if (/\s/.test(char)) {
+      if (current) words.push(current)
+      current = ""
+      continue
+    }
+    current += char
+  }
+  if (current) words.push(current)
+  return words
+}
+
+function execNodeAsync(args: string[], cwd: string): Promise<WorktreeCommandResult> {
+  return new Promise((resolve) => {
+    execFile(process.execPath, args, {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: DEFAULT_GIT_MAX_BUFFER,
+      windowsHide: true,
+      env: { ...process.env, OPENCODE_SANDBOX_AUTO: "0" },
+    }, (error, stdout, stderr) => {
+      resolve({
+        status: error && typeof (error as any).code === "number" ? (error as any).code : error ? 1 : 0,
+        stdout: String(stdout || ""),
+        stderr: String(stderr || ""),
+      })
+    })
+  })
+}
+
+function toPosix(value: string): string {
+  return String(value || "").replace(/\\/g, "/")
 }
 
 export function shouldRunTuiPlugin(moduleURL = "", input: SandboxResolveInput = {}): boolean {
