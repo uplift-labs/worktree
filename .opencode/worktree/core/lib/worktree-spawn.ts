@@ -126,12 +126,13 @@ function copyUntracked(source: string, target: string): void {
 
 function launchWindowsTerminal(worktreePath: string, branch: string): boolean {
   try {
-    const child = spawn("wt.exe", ["new-tab", "--title", branch, "--startingDirectory", worktreePath, "opencode", worktreePath], {
+    const child = spawn("wt.exe", ["new-tab", "--title", branch, "--startingDirectory", worktreePath, ...opencodeCommand(worktreePath)], {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
       env: { ...process.env, OPENCODE_WORKTREE_AUTO: "0" },
     })
+    child.on("error", () => {})
     child.unref()
     return true
   } catch {
@@ -139,12 +140,21 @@ function launchWindowsTerminal(worktreePath: string, branch: string): boolean {
   }
 }
 
+function opencodeCommand(worktreePath: string): string[] {
+  if (process.platform !== "win32") return ["opencode", worktreePath]
+  const opencode = firstCommandPath("opencode.cmd") || firstCommandPath("opencode.exe") || "opencode"
+  return ["cmd.exe", "/d", "/s", "/c", `"${quoteCmdArg(opencode)} ${quoteCmdArg(worktreePath)}"`]
+}
+
 function commandAvailable(command: string): boolean {
   if (process.platform !== "win32") return false
-  const probe = process.platform === "win32"
-    ? run("where.exe", [command], { timeout: 3000, env: { ...process.env, MSYS2_ARG_CONV_EXCL: "*" } })
-    : run("command", ["-v", command], { timeout: 3000 })
-  return probe.status === 0
+  return !!firstCommandPath(command)
+}
+
+function firstCommandPath(command: string): string {
+  const probe = run("where.exe", [command], { timeout: 3000, env: { ...process.env, MSYS2_ARG_CONV_EXCL: "*" } })
+  if (probe.status !== 0) return ""
+  return String(probe.stdout || "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) || ""
 }
 
 function cleanupCreated(repo: string, created: CreatedWorktree[]): void {
@@ -156,6 +166,10 @@ function cleanupCreated(repo: string, created: CreatedWorktree[]): void {
 
 function quoteArg(value: string): string {
   return /[\s"]/g.test(value) ? JSON.stringify(value) : value
+}
+
+function quoteCmdArg(value: string): string {
+  return `"${String(value).replace(/"/g, "\\\"")}"`
 }
 
 function commandOutput(value: unknown): string {
