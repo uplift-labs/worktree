@@ -13,7 +13,7 @@ const USAGE = [
 ].join("\n")
 
 const REPO_URL = "https://github.com/uplift-labs/worktree.git"
-const DEFAULT_REF = process.env.WORKTREE_SANDBOX_REF || "v2.0.0"
+const DEFAULT_REF = process.env.WORKTREE_REF || "v2.0.0"
 
 export function remoteInstall(argv: string[]): number {
   let ref = DEFAULT_REF

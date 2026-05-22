@@ -9,9 +9,9 @@ export function markerSafeId(value: string): string {
 export function markerPath(common: string, session: string): string {
   const safe = markerSafeId(session)
   if (!safe) throw new Error("empty marker session")
-  const safePath = path.join(common, "sandbox-markers", safe)
+  const safePath = path.join(common, "worktree-markers", safe)
   if (!/[\\/]/.test(session) && session !== "." && session !== "..") {
-    const legacyPath = path.join(common, "sandbox-markers", session)
+    const legacyPath = path.join(common, "worktree-markers", session)
     if (legacyPath !== safePath && fs.existsSync(legacyPath)) return legacyPath
   }
   return safePath

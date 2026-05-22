@@ -5,7 +5,7 @@ import { spawn } from "node:child_process"
 import { isMainModule, needValue, run, UsageError } from "./exec.ts"
 import { cleanupLog } from "./cleanup-log.ts"
 
-const USAGE = "usage: heartbeat.ts --marker <marker-path> [--pid <pid>] [--interval <seconds>] [--max-age <seconds>] [--parent-winpid <windows-pid>] [--repo <dir>] [--sandbox-root <dir>] [--worktrees-dir <rel>] [--branch-prefix <glob>] [--owner-process-names <name[,name...]>]"
+const USAGE = "usage: heartbeat.ts --marker <marker-path> [--pid <pid>] [--interval <seconds>] [--max-age <seconds>] [--parent-winpid <windows-pid>] [--repo <dir>] [--worktree-root <dir>] [--worktrees-dir <rel>] [--branch-prefix <glob>] [--owner-process-names <name[,name...]>]"
 
 export async function heartbeat(argv: string[]): Promise<number> {
   let pid = ""
@@ -14,8 +14,8 @@ export async function heartbeat(argv: string[]): Promise<number> {
   let maxAge = 86400
   let parentWinPid = ""
   let repo = ""
-  let sandboxRoot = ""
-  let worktreesDir = ".sandbox/worktrees"
+  let worktreeRoot = ""
+  let worktreesDir = ".worktree/worktrees"
   let branchPrefix = "wt-*"
   let ownerProcessNames = "opencode,opencode.exe,node,node.exe,bun,bun.exe"
 
@@ -28,7 +28,7 @@ export async function heartbeat(argv: string[]): Promise<number> {
       case "--max-age": maxAge = Number.parseInt(needValue(argv, i, USAGE), 10); i += 2; break
       case "--parent-winpid": parentWinPid = needValue(argv, i, USAGE); i += 2; break
       case "--repo": repo = needValue(argv, i, USAGE); i += 2; break
-      case "--sandbox-root": sandboxRoot = needValue(argv, i, USAGE); i += 2; break
+      case "--worktree-root": worktreeRoot = needValue(argv, i, USAGE); i += 2; break
       case "--worktrees-dir": worktreesDir = needValue(argv, i, USAGE); i += 2; break
       case "--branch-prefix": branchPrefix = needValue(argv, i, USAGE); i += 2; break
       case "--owner-process-names": ownerProcessNames = needValue(argv, i, USAGE); i += 2; break
@@ -76,18 +76,18 @@ export async function heartbeat(argv: string[]): Promise<number> {
     tick += 1
   }
 
-  if (parentDied && sandboxRoot && repo) {
+  if (parentDied && worktreeRoot && repo) {
     const session = path.basename(marker)
     if (process.platform === "win32" && hasLiveOwnerProcess(ownerProcessNames)) {
-      cleanupLog(sandboxRoot, "SKIP", session, "-", "heartbeat-sanity-live-owner")
+      cleanupLog(worktreeRoot, "SKIP", session, "-", "heartbeat-sanity-live-owner")
       try { fs.rmSync(sidecar, { force: true }) } catch { /* best effort */ }
       cleanupRan = true
       return 0
     }
-    cleanupLog(sandboxRoot, "DESTROY", session, "-", "heartbeat-parent-death")
+    cleanupLog(worktreeRoot, "DESTROY", session, "-", "heartbeat-parent-death")
     try {
-      const child = spawn(process.execPath, [path.join(sandboxRoot, "core", "cmd", "sandbox-cleanup.ts"), "--repo", repo, "--session", session, "--worktrees-dir", worktreesDir, "--branch-prefix", branchPrefix], {
-        cwd: sandboxRoot,
+      const child = spawn(process.execPath, [path.join(worktreeRoot, "core", "cmd", "worktree-cleanup.ts"), "--repo", repo, "--session", session, "--worktrees-dir", worktreesDir, "--branch-prefix", branchPrefix], {
+        cwd: worktreeRoot,
         detached: true,
         stdio: "ignore",
         windowsHide: true,

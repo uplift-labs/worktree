@@ -3,9 +3,9 @@ import fs from "node:fs"
 import { isMainModule, needValue, UsageError } from "../lib/exec.ts"
 import { scanUncommitted } from "../lib/scan-uncommitted.ts"
 
-const USAGE = "usage: sandbox-merge-gate.ts --worktree <dir>"
+const USAGE = "usage: worktree-merge-gate.ts --worktree <dir>"
 
-export function sandboxMergeGate(argv: string[]): number {
+export function worktreeMergeGate(argv: string[]): number {
   let worktree = ""
   for (let i = 0; i < argv.length;) {
     const arg = argv[i]
@@ -25,7 +25,7 @@ export function sandboxMergeGate(argv: string[]): number {
   }
   const scan = scanUncommitted(worktree)
   if (!scan.clean) {
-    console.log("sandbox-merge-gate: BLOCKED")
+    console.log("worktree-merge-gate: BLOCKED")
     console.log(`filesystem not clean: ${scan.summary} - commit or stash before merge`)
     return 1
   }
@@ -34,7 +34,7 @@ export function sandboxMergeGate(argv: string[]): number {
 
 if (isMainModule(import.meta.url)) {
   try {
-    process.exit(sandboxMergeGate(process.argv.slice(2)))
+    process.exit(worktreeMergeGate(process.argv.slice(2)))
   } catch (error) {
     if (error instanceof UsageError) {
       console.error(error.message)

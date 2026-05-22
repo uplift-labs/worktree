@@ -28,7 +28,7 @@ export type WorktreeSpawnResult = {
 
 type CreatedWorktree = { path: string; branch: string }
 
-const DEFAULT_WORKTREES_DIR = ".sandbox/worktrees"
+const DEFAULT_WORKTREES_DIR = ".worktree/worktrees"
 const DEFAULT_BRANCH_PREFIX = "wt"
 
 export function spawnWorktrees(options: WorktreeSpawnOptions): WorktreeSpawnResult {
@@ -130,7 +130,7 @@ function launchWindowsTerminal(worktreePath: string, branch: string): boolean {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
-      env: { ...process.env, OPENCODE_SANDBOX_AUTO: "0" },
+      env: { ...process.env, OPENCODE_WORKTREE_AUTO: "0" },
     })
     child.unref()
     return true

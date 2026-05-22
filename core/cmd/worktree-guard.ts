@@ -5,17 +5,17 @@ import { isMainModule, needValue, toPosix, UsageError } from "../lib/exec.ts"
 import { gitCommonDir, gitRoot } from "../lib/git-context.ts"
 import { markerPath, markerReadValue } from "../lib/ttl-marker.ts"
 
-const USAGE = "usage: sandbox-guard.ts --session <id> --file <path> [--repo <dir>] [--worktrees-dir <rel>]"
+const USAGE = "usage: worktree-guard.ts --session <id> --file <path> [--repo <dir>] [--worktrees-dir <rel>]"
 
 function norm(value: string): string {
   return toPosix(path.resolve(value)).replace(/\/+/g, "/").toLowerCase()
 }
 
-export function sandboxGuard(argv: string[]): number {
+export function worktreeGuard(argv: string[]): number {
   let session = ""
   let file = ""
   let repo = ""
-  let worktreesDir = ".sandbox/worktrees"
+  let worktreesDir = ".worktree/worktrees"
 
   for (let i = 0; i < argv.length;) {
     const arg = argv[i]
@@ -48,14 +48,14 @@ export function sandboxGuard(argv: string[]): number {
   const branch = markerReadValue(marker)
   if (!branch) return 0
 
-  const sandbox = path.join(repoRoot, worktreesDir, branch)
+  const worktree = path.join(repoRoot, worktreesDir, branch)
   const nf = norm(file)
   const nr = norm(repoRoot)
-  const ns = norm(sandbox)
+  const ns = norm(worktree)
 
   if (nf === ns || nf.startsWith(`${ns}/`)) return 0
   if (nf === nr || nf.startsWith(`${nr}/`)) {
-    console.log(`sandbox-guard: edit blocked - session ${session} has sandbox at ${sandbox}, but target is in main repo (${file}). Edit the sandbox copy and merge via git.`)
+    console.log(`worktree-guard: edit blocked - session ${session} has worktree at ${worktree}, but target is in main repo (${file}). Edit the worktree and merge via git.`)
     return 1
   }
   return 0
@@ -63,7 +63,7 @@ export function sandboxGuard(argv: string[]): number {
 
 if (isMainModule(import.meta.url)) {
   try {
-    process.exit(sandboxGuard(process.argv.slice(2)))
+    process.exit(worktreeGuard(process.argv.slice(2)))
   } catch (error) {
     if (error instanceof UsageError) {
       console.error(error.message)

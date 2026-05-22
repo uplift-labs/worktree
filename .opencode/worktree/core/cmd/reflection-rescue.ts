@@ -7,7 +7,7 @@ const USAGE = "usage: reflection-rescue.ts --repo <dir> [--worktrees-dir <rel>]"
 
 export function reflectionRescue(argv: string[]): number {
   let repo = ""
-  let worktreesDir = ".sandbox/worktrees"
+  let worktreesDir = ".worktree/worktrees"
   const reflectionDir = process.env.REFLECTION_RESCUE_DIR || ".reinforce/reflections"
 
   for (let i = 0; i < argv.length;) {

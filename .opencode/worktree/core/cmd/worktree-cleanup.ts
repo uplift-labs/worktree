@@ -7,16 +7,16 @@ import { cleanupLog } from "../lib/cleanup-log.ts"
 import { gitCommonDir, hasInProgressOperation, mainBranch } from "../lib/git-context.ts"
 import { scanUncommitted } from "../lib/scan-uncommitted.ts"
 import { markerPath, markerReadInitialHead, markerReadValue, markerTouch } from "../lib/ttl-marker.ts"
-import { sandboxLifecycle } from "./sandbox-lifecycle.ts"
+import { worktreeLifecycle } from "./worktree-lifecycle.ts"
 
-const USAGE = "usage: sandbox-cleanup.ts --repo <dir> --session <id> [--trust-dead] [--worktrees-dir <rel>] [--branch-prefix <glob>]"
-const SANDBOX_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+const USAGE = "usage: worktree-cleanup.ts --repo <dir> --session <id> [--trust-dead] [--worktrees-dir <rel>] [--branch-prefix <glob>]"
+const WORKTREE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
-export function sandboxCleanup(argv: string[]): number {
+export function worktreeCleanup(argv: string[]): number {
   let repo = ""
   let session = ""
   let trustDead = false
-  let worktreesDir = ".sandbox/worktrees"
+  let worktreesDir = ".worktree/worktrees"
   let branchPrefix = "wt-*"
 
   for (let i = 0; i < argv.length;) {
@@ -46,52 +46,52 @@ export function sandboxCleanup(argv: string[]): number {
   }
   if (!fs.existsSync(marker)) return 0
   const branch = markerReadValue(marker)
-  const sandbox = path.join(repo, worktreesDir, branch)
-  if (!branch || !fs.existsSync(sandbox)) return 0
+  const worktree = path.join(repo, worktreesDir, branch)
+  if (!branch || !fs.existsSync(worktree)) return 0
 
   let canCommit = true
-  if (hasInProgressOperation(sandbox)) {
+  if (hasInProgressOperation(worktree)) {
     canCommit = false
-    console.error(`[sandbox] cleanup: in-progress merge/rebase in ${branch} - skipping capture-commit.`)
+    console.error(`[worktree] cleanup: in-progress merge/rebase in ${branch} - skipping capture-commit.`)
   }
-  if (canCommit && git(["symbolic-ref", "-q", "HEAD"], sandbox).status !== 0) {
+  if (canCommit && git(["symbolic-ref", "-q", "HEAD"], worktree).status !== 0) {
     canCommit = false
-    console.error(`[sandbox] cleanup: detached HEAD in ${branch} - skipping capture-commit.`)
+    console.error(`[worktree] cleanup: detached HEAD in ${branch} - skipping capture-commit.`)
   }
 
   if (canCommit) {
-    git(["add", "-A"], sandbox)
-    if (git(["diff", "--cached", "--quiet"], sandbox).status !== 0) {
-      if (git(["commit", "-q", "-m", "chore(sandbox-cleanup): capture pending work"], sandbox).status !== 0) {
-        console.error(`[sandbox] cleanup: capture-commit failed on ${branch} - sandbox left as-is.`)
+    git(["add", "-A"], worktree)
+    if (git(["diff", "--cached", "--quiet"], worktree).status !== 0) {
+      if (git(["commit", "-q", "-m", "chore(worktree-cleanup): capture pending work"], worktree).status !== 0) {
+        console.error(`[worktree] cleanup: capture-commit failed on ${branch} - worktree left as-is.`)
       }
     }
   }
 
   const rootBranch = mainBranch(repo)
   const initHead = markerReadInitialHead(marker)
-  const curHead = git(["rev-parse", "HEAD"], sandbox).stdout.trim()
+  const curHead = git(["rev-parse", "HEAD"], worktree).stdout.trim()
   let freshGuardOk = true
   if (!trustDead && (!initHead || !curHead || curHead === initHead)) freshGuardOk = false
 
-  if (canCommit && rootBranch && freshGuardOk && git(["merge-base", "--is-ancestor", branch, rootBranch], sandbox).status === 0 && scanUncommitted(sandbox, { ignoreDeletions: true }).clean) {
+  if (canCommit && rootBranch && freshGuardOk && git(["merge-base", "--is-ancestor", branch, rootBranch], worktree).status === 0 && scanUncommitted(worktree, { ignoreDeletions: true }).clean) {
     try {
       fs.rmSync(marker, { force: true })
       fs.rmSync(`${marker}.hb`, { force: true })
     } catch {
       // lifecycle TTL remains
     }
-    cleanupLog(SANDBOX_ROOT, "RELEASE", session, branch, "cleanup-phase2-self-release")
+    cleanupLog(WORKTREE_ROOT, "RELEASE", session, branch, "cleanup-phase2-self-release")
   }
 
   if (fs.existsSync(marker)) markerTouch(marker)
-  sandboxLifecycle(["--repo", repo, "--worktrees-dir", worktreesDir, "--branch-prefix", branchPrefix], { quiet: true })
+  worktreeLifecycle(["--repo", repo, "--worktrees-dir", worktreesDir, "--branch-prefix", branchPrefix], { quiet: true })
   return 0
 }
 
 if (isMainModule(import.meta.url)) {
   try {
-    process.exit(sandboxCleanup(process.argv.slice(2)))
+    process.exit(worktreeCleanup(process.argv.slice(2)))
   } catch (error) {
     if (error instanceof UsageError) {
       console.error(error.message)

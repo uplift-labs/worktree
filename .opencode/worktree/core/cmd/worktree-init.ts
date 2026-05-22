@@ -5,14 +5,14 @@ import { git, gitOutput, isMainModule, needValue, UsageError } from "../lib/exec
 import { gitCommonDir, gitRoot, isLinkedWorktree, mainBranch } from "../lib/git-context.ts"
 import { markerIsFresh, markerPath, markerReadValue, markerSafeId, markerWrite } from "../lib/ttl-marker.ts"
 
-const USAGE = "usage: sandbox-init.ts --repo <dir> --session <id> [--base <branch>] [--worktrees-dir <rel>] [--branch-prefix <prefix>]"
+const USAGE = "usage: worktree-init.ts --repo <dir> --session <id> [--base <branch>] [--worktrees-dir <rel>] [--branch-prefix <prefix>]"
 const MARKER_TTL = 86400
 
-export function sandboxInit(argv: string[]): number {
+export function worktreeInit(argv: string[]): number {
   let repo = ""
   let session = ""
   let base = ""
-  let worktreesDir = ".sandbox/worktrees"
+  let worktreesDir = ".worktree/worktrees"
   let branchPrefix = "wt"
 
   for (let i = 0; i < argv.length;) {
@@ -97,7 +97,7 @@ export function sandboxInit(argv: string[]): number {
 
 if (isMainModule(import.meta.url)) {
   try {
-    process.exit(sandboxInit(process.argv.slice(2)))
+    process.exit(worktreeInit(process.argv.slice(2)))
   } catch (error) {
     if (error instanceof UsageError) {
       console.error(error.message)

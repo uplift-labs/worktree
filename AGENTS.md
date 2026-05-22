@@ -4,8 +4,8 @@ OpenCode-focused repository instructions for `worktree`. `CONTRACT.md` is the pu
 
 ## Worktree Discipline
 
-- During OpenCode sessions, `OPENCODE_SANDBOX_WORKTREE` is the active project root; do file reads and edits there, not in the main checkout.
-- OpenCode may still display the original repo/branch because the plugin virtualizes supported tool paths into the active worktree. Trust `OPENCODE_SANDBOX_WORKTREE`, tool working dirs, and `git status` run from the tool.
+- During OpenCode sessions, `OPENCODE_WORKTREE_PATH` is the active project root; do file reads and edits there, not in the main checkout.
+- OpenCode may still display the original repo/branch because the plugin virtualizes supported tool paths into the active worktree. Trust `OPENCODE_WORKTREE_PATH`, tool working dirs, and `git status` run from the tool.
 - When the user asks to land, ship, upload, or fix changes in `main`, complete the path: verify, commit, merge or fast-forward `main`, push, then dogfood the installed/current state when feasible.
 - Do not leave completed work only in an isolated worktree branch unless the user explicitly asks for a worktree-only change or a blocker prevents landing. If blocked, report the blocker and the safest next command.
 
@@ -29,12 +29,12 @@ OpenCode-focused repository instructions for `worktree`. `CONTRACT.md` is the pu
 
 - Core exit codes are fixed: `0` allow/success, `1` deny/failure with reason on stdout, `2` bad usage. Preserve the fail-open policy when git context cannot be resolved.
 - Changing any `core/cmd/` flag, output, exit code, marker format, or lifecycle phase requires updating `CONTRACT.md` and tests in the same change.
-- Markers live at `<git-common-dir>/sandbox-markers/<session-id>` with fields `branch epoch initial_head`; `core/lib/ttl-marker.ts` owns marker reads/writes.
-- Source CLI default worktrees dir is `.sandbox/worktrees`; installed OpenCode integration passes `.opencode/worktree/worktrees` explicitly.
+- Markers live at `<git-common-dir>/worktree-markers/<session-id>` with fields `branch epoch initial_head`; `core/lib/ttl-marker.ts` owns marker reads/writes.
+- Source CLI default worktrees dir is `.worktree/worktrees`; installed OpenCode integration passes `.opencode/worktree/worktrees` explicitly.
 
 ## Lifecycle And Hooks
 
-- `sandbox-lifecycle.ts` order is load-bearing: reflection rescue, `git worktree prune`, TTL marker reclaim, proactive marker release, merged worktree cleanup, orphan branch sweep, residual dir sweep.
+- `worktree-lifecycle.ts` order is load-bearing: reflection rescue, `git worktree prune`, TTL marker reclaim, proactive marker release, merged worktree cleanup, orphan branch sweep, residual dir sweep.
 - Idle hooks are heartbeat-only. Cleanup belongs to OpenCode `session.deleted`, process exit, or heartbeat parent-death cleanup.
 - Session cleanup capture-commits pending worktree work but never merges to `main`; merging is always a deliberate user action protected by the merge gate.
 - The installed `pre-merge-commit` hook validates cleanliness of the worktree being merged, not the target repo's merge-staged index. Keep non-worktree/no-match cases fail-open.

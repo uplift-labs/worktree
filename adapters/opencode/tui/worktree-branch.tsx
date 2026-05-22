@@ -5,11 +5,11 @@ import {
   createBranchObserver,
   createChangedFilesObserver,
   runWorktreeCommandAsync,
-  resolveRenderableSandboxWorktreeAsync,
-  resolveSandboxWorktreeAsync,
+  resolveRenderableWorktreeAsync,
+  resolveWorktreeAsync,
   shouldRunTuiPluginAsync,
   tuiPluginID,
-} from "./worktree-sandbox-branch-core.ts"
+} from "./worktree-branch-core.ts"
 
 const MODULE_URL = import.meta.url
 
@@ -91,7 +91,7 @@ function BranchBadge(props) {
   const observer = createBranchObserver({
     sessionID: props.sessionID,
     getWorktree() {
-      return resolveSandboxWorktreeAsync({
+      return resolveWorktreeAsync({
         sessionID: props.sessionID,
         directory: api.state.path.directory,
         worktreeHint: api.state.path.worktree,
@@ -137,7 +137,7 @@ function BranchBadge(props) {
   )
 }
 
-function SandboxFiles(props) {
+function WorktreeFiles(props) {
   const [files, setFiles] = createSignal([])
   const [open, setOpen] = createSignal(true)
   const api = props.api
@@ -151,7 +151,7 @@ function SandboxFiles(props) {
           if (process.env.AISB_OPENCODE_FILES_DEBUG !== "1") return
           api.ui.toast({
             variant: "warning",
-            message: `sandbox files ${phase} failed: ${errorMessage(error)}`,
+            message: `worktree files ${phase} failed: ${errorMessage(error)}`,
             duration: 3000,
           })
         },
@@ -167,7 +167,7 @@ function SandboxFiles(props) {
   const observer = createChangedFilesObserver({
     sessionID: props.sessionID,
     getWorktree() {
-      return resolveRenderableSandboxWorktreeAsync({
+      return resolveRenderableWorktreeAsync({
         sessionID: props.sessionID,
         directory: api.state.path.directory,
         worktreeHint: api.state.path.worktree,
@@ -181,7 +181,7 @@ function SandboxFiles(props) {
       if (process.env.AISB_OPENCODE_FILES_DEBUG !== "1") return
       api.ui.toast({
         variant: "warning",
-        message: `sandbox files ${phase} failed: ${errorMessage(error)}`,
+        message: `worktree files ${phase} failed: ${errorMessage(error)}`,
         duration: 3000,
       })
     },
@@ -201,7 +201,7 @@ function SandboxFiles(props) {
     observer.close()
   })
 
-  const title = () => process.env.AISB_OPENCODE_FILES_LABEL || "Sandbox Modified Files"
+  const title = () => process.env.AISB_OPENCODE_FILES_LABEL || "Worktree Modified Files"
 
   return (
     <Show when={files().length > 0}>
@@ -266,8 +266,8 @@ const tui = async (api) => {
     order: 490,
     slots: {
       sidebar_content(_ctx, props) {
-        if (!props.session_id && !process.env.OPENCODE_SANDBOX_WORKTREE) return null
-        return <SandboxFiles api={api} sessionID={props.session_id} />
+        if (!props.session_id && !process.env.OPENCODE_WORKTREE_PATH) return null
+        return <WorktreeFiles api={api} sessionID={props.session_id} />
       },
     },
   })

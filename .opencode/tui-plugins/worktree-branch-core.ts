@@ -4,7 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 type Env = NodeJS.ProcessEnv | Record<string, string | undefined>
-type SandboxResolveInput = {
+type WorktreeResolveInput = {
   env?: Env
   directory?: string
   worktreeHint?: string
@@ -17,13 +17,13 @@ type BuiltinFilesOptions = {
   onSettled?: (status: { hidden: boolean }) => void
   onError?: (error: unknown, phase: string) => void
 }
-type BranchObserverOptions = SandboxResolveInput & {
+type BranchObserverOptions = WorktreeResolveInput & {
   debounceMs?: number | string
   getWorktree?: () => string | Promise<string>
   onChange?: (next: { branch: string; worktree: string; reason: string }) => void
   onError?: (error: unknown, phase: string) => void
 }
-type ChangedFilesObserverOptions = SandboxResolveInput & {
+type ChangedFilesObserverOptions = WorktreeResolveInput & {
   debounceMs?: number | string
   getWorktree?: () => string | Promise<string>
   onChange?: (next: { files: ChangedFile[]; worktree: string; reason: string }) => void
@@ -214,16 +214,16 @@ export function tuiPluginID(moduleURL = ""): string {
 
 export async function runWorktreeCommandAsync(moduleURL: string, input: { directory?: string; args?: string } = {}): Promise<WorktreeCommandResult> {
   const directory = input.directory || process.cwd()
-  const root = await findSandboxRootAsync(moduleURL, directory)
+  const root = await findWorktreeRootAsync(moduleURL, directory)
   if (!root) return { status: 1, stdout: "", stderr: "worktree core not found" }
   const script = path.join(root, "core", "cmd", "worktree-spawn.ts")
   const args = [script, "--repo", directory, "--worktrees-dir", worktreesDirFor(root, directory), "--branch-prefix", branchPrefix(process.env), ...parseWorktreeArgs(input.args || "")]
   return execNodeAsync(args, root)
 }
 
-async function findSandboxRootAsync(moduleURL: string, directory: string): Promise<string> {
+async function findWorktreeRootAsync(moduleURL: string, directory: string): Promise<string> {
   const candidates: string[] = []
-  const envRoot = envValue(process.env, "OPENCODE_SANDBOX_ROOT")
+  const envRoot = envValue(process.env, "OPENCODE_WORKTREE_ROOT")
   if (envRoot) candidates.push(envRoot)
   const repo = resolveRepo(directory)
   if (repo) candidates.push(path.join(repo, ".opencode", "worktree"), repo)
@@ -241,15 +241,15 @@ async function findSandboxRootAsync(moduleURL: string, directory: string): Promi
 }
 
 function worktreesDirFor(root: string, directory: string): string {
-  const envDir = envValue(process.env, "OPENCODE_SANDBOX_WORKTREES_DIR") || envValue(process.env, "WORKTREE_SANDBOX_WORKTREES_DIR")
+  const envDir = envValue(process.env, "OPENCODE_WORKTREES_DIR") || envValue(process.env, "WORKTREE_WORKTREES_DIR")
   if (envDir) return envDir
   const repo = resolveRepo(directory)
   if (repo && isWithinPath(root, repo) && normalizePathForCompare(root) !== normalizePathForCompare(repo)) return `${toPosix(path.relative(repo, root))}/worktrees`
-  return ".sandbox/worktrees"
+  return ".worktree/worktrees"
 }
 
 function branchPrefix(env: Env = process.env): string {
-  return envValue(env, "WORKTREE_SANDBOX_BRANCH_PREFIX") || envValue(env, "OPENCODE_SANDBOX_BRANCH_PREFIX") || "wt"
+  return envValue(env, "WORKTREE_BRANCH_PREFIX") || envValue(env, "OPENCODE_WORKTREE_BRANCH_PREFIX") || "wt"
 }
 
 function parseWorktreeArgs(value: string): string[] {
@@ -307,7 +307,7 @@ function execNodeAsync(args: string[], cwd: string): Promise<WorktreeCommandResu
       encoding: "utf8",
       maxBuffer: DEFAULT_GIT_MAX_BUFFER,
       windowsHide: true,
-      env: { ...process.env, OPENCODE_SANDBOX_AUTO: "0" },
+      env: { ...process.env, OPENCODE_WORKTREE_AUTO: "0" },
     }, (error, stdout, stderr) => {
       resolve({
         status: error && typeof (error as any).code === "number" ? (error as any).code : error ? 1 : 0,
@@ -322,67 +322,67 @@ function toPosix(value: string): string {
   return String(value || "").replace(/\\/g, "/")
 }
 
-export function shouldRunTuiPlugin(moduleURL = "", input: SandboxResolveInput = {}): boolean {
+export function shouldRunTuiPlugin(moduleURL = "", input: WorktreeResolveInput = {}): boolean {
   const env = input.env || process.env
-  const worktree = resolveSandboxWorktree({ ...input, env })
+  const worktree = resolveWorktree({ ...input, env })
   const directory = input.directory || input.worktreeHint || process.cwd()
   if (!worktree || !directory || !isWithinPath(directory, worktree)) return true
 
   const modulePath = moduleFilePath(moduleURL)
   if (!modulePath || isWithinPath(modulePath, worktree)) return true
 
-  const sandboxPlugin = path.join(worktree, ".opencode", "tui-plugins", path.basename(modulePath))
-  return !fs.existsSync(sandboxPlugin)
+  const worktreePlugin = path.join(worktree, ".opencode", "tui-plugins", path.basename(modulePath))
+  return !fs.existsSync(worktreePlugin)
 }
 
-export async function shouldRunTuiPluginAsync(moduleURL = "", input: SandboxResolveInput = {}): Promise<boolean> {
+export async function shouldRunTuiPluginAsync(moduleURL = "", input: WorktreeResolveInput = {}): Promise<boolean> {
   const env = input.env || process.env
-  const worktree = await resolveSandboxWorktreeAsync({ ...input, env })
+  const worktree = await resolveWorktreeAsync({ ...input, env })
   const directory = input.directory || input.worktreeHint || process.cwd()
   if (!worktree || !directory || !isWithinPath(directory, worktree)) return true
 
   const modulePath = moduleFilePath(moduleURL)
   if (!modulePath || isWithinPath(modulePath, worktree)) return true
 
-  const sandboxPlugin = path.join(worktree, ".opencode", "tui-plugins", path.basename(modulePath))
-  return !(await pathExistsAsync(sandboxPlugin))
+  const worktreePlugin = path.join(worktree, ".opencode", "tui-plugins", path.basename(modulePath))
+  return !(await pathExistsAsync(worktreePlugin))
 }
 
-export function shouldRenderSandboxFiles(input: SandboxResolveInput = {}): boolean {
+export function shouldRenderWorktreeFiles(input: WorktreeResolveInput = {}): boolean {
   const env = input.env || process.env
   const directory = input.directory || input.worktreeHint || process.cwd()
 
-  const direct = envValue(env, "OPENCODE_SANDBOX_WORKTREE")
+  const direct = envValue(env, "OPENCODE_WORKTREE_PATH")
   if (direct) return !!directory && !isWithinPath(directory, direct)
 
-  if (isLikelySandboxWorktreePath(directory, env) || isLikelySandboxWorktreePath(input.worktreeHint, env)) return false
+  if (isLikelyWorktreePath(directory, env) || isLikelyWorktreePath(input.worktreeHint, env)) return false
 
-  const worktree = resolveSandboxWorktree({ ...input, env })
+  const worktree = resolveWorktree({ ...input, env })
   return !!worktree && !!directory && !isWithinPath(directory, worktree)
 }
 
-export async function shouldRenderSandboxFilesAsync(input: SandboxResolveInput = {}): Promise<boolean> {
-  return !!(await resolveRenderableSandboxWorktreeAsync(input))
+export async function shouldRenderWorktreeFilesAsync(input: WorktreeResolveInput = {}): Promise<boolean> {
+  return !!(await resolveRenderableWorktreeAsync(input))
 }
 
-export async function resolveRenderableSandboxWorktreeAsync(input: SandboxResolveInput = {}): Promise<string> {
+export async function resolveRenderableWorktreeAsync(input: WorktreeResolveInput = {}): Promise<string> {
   const env = input.env || process.env
   const directory = input.directory || input.worktreeHint || process.cwd()
 
-  const direct = envValue(env, "OPENCODE_SANDBOX_WORKTREE")
+  const direct = envValue(env, "OPENCODE_WORKTREE_PATH")
   if (direct) {
     if (!(await pathExistsAsync(direct))) return ""
     return !!directory && !isWithinPath(directory, direct) ? path.resolve(direct) : ""
   }
 
-  if (isLikelySandboxWorktreePath(directory, env) || isLikelySandboxWorktreePath(input.worktreeHint, env)) return ""
+  if (isLikelyWorktreePath(directory, env) || isLikelyWorktreePath(input.worktreeHint, env)) return ""
 
-  const worktree = await resolveSandboxWorktreeAsync({ ...input, env })
+  const worktree = await resolveWorktreeAsync({ ...input, env })
   return !!worktree && !!directory && !isWithinPath(directory, worktree) ? worktree : ""
 }
 
-export function sandboxSessionID(sessionID: unknown, env: Env = process.env): string {
-  return compactOpenCodeSessionID(sessionID || envValue(env, "OPENCODE_RUN_ID") || envValue(env, "OPENCODE_SANDBOX_SESSION"))
+export function worktreeSessionID(sessionID: unknown, env: Env = process.env): string {
+  return compactOpenCodeSessionID(sessionID || envValue(env, "OPENCODE_RUN_ID") || envValue(env, "OPENCODE_WORKTREE_SESSION"))
 }
 
 function compactOpenCodeSessionID(value: unknown): string {
@@ -397,7 +397,7 @@ function compactOpenCodeSessionID(value: unknown): string {
   return `oc-${legacy.slice(0, 24)}`
 }
 
-function sandboxSessionIDCandidates(sessionID: unknown, env: Env = process.env): string[] {
+function worktreeSessionIDCandidates(sessionID: unknown, env: Env = process.env): string[] {
   const ids: string[] = []
   const add = (value: unknown) => {
     const safe = sanitizeOptionalId(value)
@@ -411,7 +411,7 @@ function sandboxSessionIDCandidates(sessionID: unknown, env: Env = process.env):
 
   add(sessionID)
   add(envValue(env, "OPENCODE_RUN_ID"))
-  add(envValue(env, "OPENCODE_SANDBOX_SESSION"))
+  add(envValue(env, "OPENCODE_WORKTREE_SESSION"))
   return ids
 }
 
@@ -679,10 +679,10 @@ function configuredWorktreesDirs(repo: string, env: Env): string[] {
     if (!dirs.includes(resolved)) dirs.push(resolved)
   }
 
-  add(envValue(env, "OPENCODE_SANDBOX_WORKTREES_DIR"))
-  add(envValue(env, "WORKTREE_SANDBOX_WORKTREES_DIR"))
+  add(envValue(env, "OPENCODE_WORKTREES_DIR"))
+  add(envValue(env, "WORKTREE_WORKTREES_DIR"))
   add(path.join(".opencode", "worktree", "worktrees"))
-  add(path.join(".sandbox", "worktrees"))
+  add(path.join(".worktree", "worktrees"))
   return dirs
 }
 
@@ -704,106 +704,106 @@ async function worktreeFromKnownLayoutAsync(repo: string, branch: string, env: E
   return ""
 }
 
-function sandboxBranchPrefix(env: Env): string {
-  return envValue(env, "OPENCODE_SANDBOX_BRANCH_PREFIX") || envValue(env, "WORKTREE_SANDBOX_BRANCH_PREFIX") || "wt"
+function worktreeBranchPrefix(env: Env): string {
+  return envValue(env, "OPENCODE_WORKTREE_BRANCH_PREFIX") || envValue(env, "WORKTREE_BRANCH_PREFIX") || "wt"
 }
 
-function isSandboxBranch(branch: string, env: Env): boolean {
-  const prefix = sandboxBranchPrefix(env).replace(/[*?].*$/, "")
+function isWorktreeBranch(branch: string, env: Env): boolean {
+  const prefix = worktreeBranchPrefix(env).replace(/[*?].*$/, "")
   return !!branch && !!prefix && branch.startsWith(`${prefix}-`)
 }
 
-function isLikelySandboxWorktreePath(file: string | undefined, env: Env): boolean {
+function isLikelyWorktreePath(file: string | undefined, env: Env): boolean {
   if (!file) return false
-  const prefix = sandboxBranchPrefix(env).replace(/[*?].*$/, "")
+  const prefix = worktreeBranchPrefix(env).replace(/[*?].*$/, "")
   const resolved = path.resolve(file)
   const name = path.basename(resolved)
   if (!prefix || !name.startsWith(`${prefix}-`)) return false
 
   const normalized = normalizePathForCompare(resolved).replace(/\\/g, "/")
-  return normalized.includes("/.opencode/worktree/worktrees/") || normalized.includes("/.sandbox/worktrees/")
+  return normalized.includes("/.opencode/worktree/worktrees/") || normalized.includes("/.worktree/worktrees/")
 }
 
-function inferCurrentSandboxWorktree(repo: string, env: Env): string {
+function inferCurrentWorktree(repo: string, env: Env): string {
   if (!repo) return ""
   const branch = readCurrentBranch(repo)
-  if (!isSandboxBranch(branch, env)) return ""
+  if (!isWorktreeBranch(branch, env)) return ""
 
   const worktree = worktreeFromList(repo, branch)
   if (!worktree) return ""
   return path.basename(path.resolve(worktree)) === branch ? path.resolve(worktree) : ""
 }
 
-async function inferCurrentSandboxWorktreeAsync(repo: string, env: Env): Promise<string> {
+async function inferCurrentWorktreeAsync(repo: string, env: Env): Promise<string> {
   if (!repo) return ""
   const branch = await readCurrentBranchAsync(repo, env)
-  if (!isSandboxBranch(branch, env)) return ""
+  if (!isWorktreeBranch(branch, env)) return ""
 
   const worktree = await worktreeFromListAsync(repo, branch, env)
   if (!worktree) return ""
   return path.basename(path.resolve(worktree)) === branch ? path.resolve(worktree) : ""
 }
 
-export function resolveSandboxWorktree(input: SandboxResolveInput = {}): string {
+export function resolveWorktree(input: WorktreeResolveInput = {}): string {
   const env = input.env || process.env
-  const direct = envValue(env, "OPENCODE_SANDBOX_WORKTREE")
-  if (envValue(env, "OPENCODE_SANDBOX_ACTIVE") === "1" && direct && fs.existsSync(direct)) return path.resolve(direct)
+  const direct = envValue(env, "OPENCODE_WORKTREE_PATH")
+  if (envValue(env, "OPENCODE_WORKTREE_ACTIVE") === "1" && direct && fs.existsSync(direct)) return path.resolve(direct)
 
-  const base = input.directory || input.worktreeHint || envValue(env, "OPENCODE_SANDBOX_REPO") || process.cwd()
+  const base = input.directory || input.worktreeHint || envValue(env, "OPENCODE_WORKTREE_REPO") || process.cwd()
   const repo = resolveRepo(base)
-  const marker = resolveSandboxMarker({ ...input, directory: base, env })
+  const marker = resolveWorktreeMarker({ ...input, directory: base, env })
   const branch = readMarkerBranch(marker)
-  if (!branch) return inferCurrentSandboxWorktree(repo, env)
+  if (!branch) return inferCurrentWorktree(repo, env)
 
   return worktreeFromList(repo, branch) || worktreeFromKnownLayout(repo, branch, env)
 }
 
-export async function resolveSandboxWorktreeAsync(input: SandboxResolveInput = {}): Promise<string> {
+export async function resolveWorktreeAsync(input: WorktreeResolveInput = {}): Promise<string> {
   const env = input.env || process.env
-  const direct = envValue(env, "OPENCODE_SANDBOX_WORKTREE")
-  if (envValue(env, "OPENCODE_SANDBOX_ACTIVE") === "1" && direct && (await pathExistsAsync(direct))) return path.resolve(direct)
+  const direct = envValue(env, "OPENCODE_WORKTREE_PATH")
+  if (envValue(env, "OPENCODE_WORKTREE_ACTIVE") === "1" && direct && (await pathExistsAsync(direct))) return path.resolve(direct)
 
-  const base = input.directory || input.worktreeHint || envValue(env, "OPENCODE_SANDBOX_REPO") || process.cwd()
+  const base = input.directory || input.worktreeHint || envValue(env, "OPENCODE_WORKTREE_REPO") || process.cwd()
   const repo = await resolveRepoAsync(base, env)
-  const marker = await resolveSandboxMarkerAsync({ ...input, directory: base, env })
+  const marker = await resolveWorktreeMarkerAsync({ ...input, directory: base, env })
   const branch = await readMarkerBranchAsync(marker)
-  if (!branch) return inferCurrentSandboxWorktreeAsync(repo, env)
+  if (!branch) return inferCurrentWorktreeAsync(repo, env)
 
   return (await worktreeFromListAsync(repo, branch, env)) || (await worktreeFromKnownLayoutAsync(repo, branch, env))
 }
 
-export function resolveSandboxMarker(input: SandboxResolveInput = {}): string {
+export function resolveWorktreeMarker(input: WorktreeResolveInput = {}): string {
   const env = input.env || process.env
-  const base = input.directory || input.worktreeHint || input.worktree || envValue(env, "OPENCODE_SANDBOX_REPO") || process.cwd()
+  const base = input.directory || input.worktreeHint || input.worktree || envValue(env, "OPENCODE_WORKTREE_REPO") || process.cwd()
   const repo = resolveRepo(base)
   if (!repo) return ""
 
   const common = resolveGitCommonDir(repo)
   if (!common) return ""
 
-  const ids = sandboxSessionIDCandidates(input.sessionID, env)
+  const ids = worktreeSessionIDCandidates(input.sessionID, env)
   for (const id of ids) {
-    const marker = path.join(common, "sandbox-markers", id)
+    const marker = path.join(common, "worktree-markers", id)
     if (fs.existsSync(marker)) return marker
   }
-  return ids[0] ? path.join(common, "sandbox-markers", ids[0]) : ""
+  return ids[0] ? path.join(common, "worktree-markers", ids[0]) : ""
 }
 
-export async function resolveSandboxMarkerAsync(input: SandboxResolveInput = {}): Promise<string> {
+export async function resolveWorktreeMarkerAsync(input: WorktreeResolveInput = {}): Promise<string> {
   const env = input.env || process.env
-  const base = input.directory || input.worktreeHint || input.worktree || envValue(env, "OPENCODE_SANDBOX_REPO") || process.cwd()
+  const base = input.directory || input.worktreeHint || input.worktree || envValue(env, "OPENCODE_WORKTREE_REPO") || process.cwd()
   const repo = await resolveRepoAsync(base, env)
   if (!repo) return ""
 
   const common = await resolveGitCommonDirAsync(repo, env)
   if (!common) return ""
 
-  const ids = sandboxSessionIDCandidates(input.sessionID, env)
+  const ids = worktreeSessionIDCandidates(input.sessionID, env)
   for (const id of ids) {
-    const marker = path.join(common, "sandbox-markers", id)
+    const marker = path.join(common, "worktree-markers", id)
     if (await pathExistsAsync(marker)) return marker
   }
-  return ids[0] ? path.join(common, "sandbox-markers", ids[0]) : ""
+  return ids[0] ? path.join(common, "worktree-markers", ids[0]) : ""
 }
 
 function gitOutputOrEmpty(args: string[], cwd: string): string {
@@ -842,28 +842,28 @@ async function gitCommitExistsAsync(worktree: string, ref: string, env: Env = pr
   }
 }
 
-export function resolveSandboxBaseRef(input: SandboxResolveInput = {}, worktree = ""): string {
+export function resolveWorktreeBaseRef(input: WorktreeResolveInput = {}, worktree = ""): string {
   const env = input.env || process.env
-  const explicit = input.baseRef || envValue(env, "OPENCODE_SANDBOX_BASE_REF")
+  const explicit = input.baseRef || envValue(env, "OPENCODE_WORKTREE_BASE_REF")
   if (gitCommitExists(worktree, explicit)) return explicit
 
   const mainBase = resolveMainMergeBase(worktree, env)
   if (mainBase) return mainBase
 
-  const marker = resolveSandboxMarker({ ...input, worktree, env })
+  const marker = resolveWorktreeMarker({ ...input, worktree, env })
   const initialHead = readMarkerInitialHead(marker)
   return gitCommitExists(worktree, initialHead) ? initialHead : ""
 }
 
-export async function resolveSandboxBaseRefAsync(input: SandboxResolveInput = {}, worktree = ""): Promise<string> {
+export async function resolveWorktreeBaseRefAsync(input: WorktreeResolveInput = {}, worktree = ""): Promise<string> {
   const env = input.env || process.env
-  const explicit = input.baseRef || envValue(env, "OPENCODE_SANDBOX_BASE_REF")
+  const explicit = input.baseRef || envValue(env, "OPENCODE_WORKTREE_BASE_REF")
   if (await gitCommitExistsAsync(worktree, explicit, env)) return explicit
 
   const mainBase = await resolveMainMergeBaseAsync(worktree, env)
   if (mainBase) return mainBase
 
-  const marker = await resolveSandboxMarkerAsync({ ...input, worktree, env })
+  const marker = await resolveWorktreeMarkerAsync({ ...input, worktree, env })
   const initialHead = await readMarkerInitialHeadAsync(marker)
   return (await gitCommitExistsAsync(worktree, initialHead, env)) ? initialHead : ""
 }
@@ -872,7 +872,7 @@ function resolveMainMergeBase(worktree: string, env: Env = process.env): string 
   if (!worktree) return ""
   const current = readCurrentBranch(worktree)
   const candidates = [
-    envValue(env, "OPENCODE_SANDBOX_COMPARE_REF"),
+    envValue(env, "OPENCODE_WORKTREE_COMPARE_REF"),
     "main",
     "master",
     "origin/main",
@@ -891,7 +891,7 @@ async function resolveMainMergeBaseAsync(worktree: string, env: Env = process.en
   if (!worktree) return ""
   const current = await readCurrentBranchAsync(worktree, env)
   const candidates = [
-    envValue(env, "OPENCODE_SANDBOX_COMPARE_REF"),
+    envValue(env, "OPENCODE_WORKTREE_COMPARE_REF"),
     "main",
     "master",
     "origin/main",
@@ -937,11 +937,11 @@ function addUntracked(files: Map<string, ChangedFile>, output: string): void {
   }
 }
 
-export function readSandboxChangedFiles(worktree: string, input: SandboxResolveInput = {}): ChangedFile[] {
+export function readWorktreeChangedFiles(worktree: string, input: WorktreeResolveInput = {}): ChangedFile[] {
   if (!worktree || !fs.existsSync(worktree)) return []
 
   const files = new Map<string, ChangedFile>()
-  const baseRef = resolveSandboxBaseRef(input, worktree)
+  const baseRef = resolveWorktreeBaseRef(input, worktree)
   if (baseRef) addNumstat(files, gitOutputOrEmpty(["diff", "--numstat", `${baseRef}..HEAD`, "--"], worktree))
 
   addNumstat(files, gitOutputOrEmpty(["diff", "--numstat", "--cached", "--"], worktree))
@@ -951,12 +951,12 @@ export function readSandboxChangedFiles(worktree: string, input: SandboxResolveI
   return Array.from(files.values()).sort((a, b) => a.file.localeCompare(b.file))
 }
 
-export async function readSandboxChangedFilesAsync(worktree: string, input: SandboxResolveInput = {}): Promise<ChangedFile[]> {
+export async function readWorktreeChangedFilesAsync(worktree: string, input: WorktreeResolveInput = {}): Promise<ChangedFile[]> {
   if (!worktree || !(await pathExistsAsync(worktree))) return []
 
   const env = input.env || process.env
   const files = new Map<string, ChangedFile>()
-  const baseRef = await resolveSandboxBaseRefAsync(input, worktree)
+  const baseRef = await resolveWorktreeBaseRefAsync(input, worktree)
   const [headDiff, cachedDiff, workingDiff, untracked] = await Promise.all([
     baseRef ? gitOutputOrEmptyAsync(["diff", "--numstat", `${baseRef}..HEAD`, "--"], worktree, env) : Promise.resolve(""),
     gitOutputOrEmptyAsync(["diff", "--numstat", "--cached", "--"], worktree, env),
@@ -1092,7 +1092,7 @@ export function createBranchObserver(options: BranchObserverOptions = {}) {
   }
 
   const resolveWorktree = async () => {
-    const worktree = typeof options.getWorktree === "function" ? options.getWorktree() : resolveSandboxWorktreeAsync(options)
+    const worktree = typeof options.getWorktree === "function" ? options.getWorktree() : resolveWorktreeAsync(options)
     const resolved = await Promise.resolve(worktree)
     return resolved ? path.resolve(resolved) : ""
   }
@@ -1217,7 +1217,7 @@ export function createChangedFilesObserver(options: ChangedFilesObserverOptions 
   }
 
   const resolveWorktree = async () => {
-    const worktree = typeof options.getWorktree === "function" ? options.getWorktree() : resolveSandboxWorktreeAsync(options)
+    const worktree = typeof options.getWorktree === "function" ? options.getWorktree() : resolveWorktreeAsync(options)
     const resolved = await Promise.resolve(worktree)
     return resolved ? path.resolve(resolved) : ""
   }
@@ -1232,7 +1232,7 @@ export function createChangedFilesObserver(options: ChangedFilesObserverOptions 
     state.refreshing = true
     try {
       const worktree = await resolveWorktree()
-      const files = worktree ? await readSandboxChangedFilesAsync(worktree, { ...options, worktree, env }) : []
+      const files = worktree ? await readWorktreeChangedFilesAsync(worktree, { ...options, worktree, env }) : []
       if (state.stopped) return
       const signature = filesSignature(files, worktree)
       state.worktree = worktree

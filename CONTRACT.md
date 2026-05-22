@@ -10,18 +10,18 @@ Every TypeScript file under `core/cmd/` is a stable public entry point. Files un
 - **Output:** human-readable text on stdout. No JSON unless explicitly noted.
 - **Exit codes:** `0` = success / allow, `1` = blocked / failure with reason on stdout, `2` = bad usage.
 - **Fail-open policy:** when git context cannot be resolved, commands exit `0` silently. They are safety nets, not gatekeepers.
-- **Marker storage:** `<git-common-dir>/sandbox-markers/<safe-session-id>`. The safe session id is the caller-provided session id with any character outside `[A-Za-z0-9-]` replaced by `-`, preventing path traversal while preserving deterministic lookup. Marker fields are `branch epoch initial_head`. Markers are auto-expired via TTL.
-- **Heartbeat sidecar:** `<marker-path>.hb`. Format: `<heartbeat_pid> <parent_winpid|0> <monitored_pid|0>`. Field 1 is the heartbeat PID. Field 2 is the native Windows PID of the owning process when known. Field 3 is the Unix PID monitored via `process.kill(pid, 0)` when known. The heartbeat touches the marker while the owning process is alive; when the owner dies, it invokes `sandbox-cleanup.ts` for immediate session cleanup.
-- **Worktree location:** source CLI default is `<repo-root>/.sandbox/worktrees/<branch-name>`. Installed OpenCode integration passes `<repo-root>/.opencode/worktree/worktrees/<branch-name>` explicitly.
+- **Marker storage:** `<git-common-dir>/worktree-markers/<safe-session-id>`. The safe session id is the caller-provided session id with any character outside `[A-Za-z0-9-]` replaced by `-`, preventing path traversal while preserving deterministic lookup. Marker fields are `branch epoch initial_head`. Markers are auto-expired via TTL.
+- **Heartbeat sidecar:** `<marker-path>.hb`. Format: `<heartbeat_pid> <parent_winpid|0> <monitored_pid|0>`. Field 1 is the heartbeat PID. Field 2 is the native Windows PID of the owning process when known. Field 3 is the Unix PID monitored via `process.kill(pid, 0)` when known. The heartbeat touches the marker while the owning process is alive; when the owner dies, it invokes `worktree-cleanup.ts` for immediate session cleanup.
+- **Worktree location:** source CLI default is `<repo-root>/.worktree/worktrees/<branch-name>`. Installed OpenCode integration passes `<repo-root>/.opencode/worktree/worktrees/<branch-name>` explicitly.
 
 ## Commands
 
-### `sandbox-init`
+### `worktree-init`
 
 Create a session worktree.
 
 ```powershell
-node core/cmd/sandbox-init.ts --repo <dir> --session <id> [--base <branch>] [--worktrees-dir <rel>] [--branch-prefix <prefix>]
+node core/cmd/worktree-init.ts --repo <dir> --session <id> [--base <branch>] [--worktrees-dir <rel>] [--branch-prefix <prefix>]
 ```
 
 | Flag | Required | Description |
@@ -29,31 +29,31 @@ node core/cmd/sandbox-init.ts --repo <dir> --session <id> [--base <branch>] [--w
 | `--repo` | yes | Absolute path to the main repo. Must be on `main` or `master`. |
 | `--session` | yes | Unique session identifier. Used for branch and marker names. |
 | `--base` | no | Base branch to fork from. Defaults to detected main branch. |
-| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.sandbox/worktrees`. |
+| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.worktree/worktrees`. |
 | `--branch-prefix` | no | Branch name prefix. Default: `wt`. |
 
 Output: absolute worktree path on stdout on success.
 
 Exit: `0` success or benign no-op, `1` hard failure with message, `2` bad usage.
 
-### `sandbox-guard`
+### `worktree-guard`
 
 Path gate: decide whether an edit at `<file>` is allowed.
 
 ```powershell
-node core/cmd/sandbox-guard.ts --session <id> --file <path> [--repo <dir>] [--worktrees-dir <rel>]
+node core/cmd/worktree-guard.ts --session <id> --file <path> [--repo <dir>] [--worktrees-dir <rel>]
 ```
 
 Allow when there is no active worktree, the file is inside the session worktree, or the file is outside the repo. Deny when the file is inside the main repo but outside the session worktree.
 
 Exit: `0` allow, `1` deny with reason on stdout, `2` bad usage.
 
-### `sandbox-lifecycle`
+### `worktree-lifecycle`
 
 Periodic cleanup.
 
 ```powershell
-node core/cmd/sandbox-lifecycle.ts --repo <dir> [--ttl <seconds>] [--branch-prefix <glob>] [--worktrees-dir <rel>]
+node core/cmd/worktree-lifecycle.ts --repo <dir> [--ttl <seconds>] [--branch-prefix <glob>] [--worktrees-dir <rel>]
 ```
 
 | Flag | Required | Description |
@@ -61,7 +61,7 @@ node core/cmd/sandbox-lifecycle.ts --repo <dir> [--ttl <seconds>] [--branch-pref
 | `--repo` | yes | Main repo path. |
 | `--ttl` | no | Marker TTL in seconds for stale reclaim. Default: `5`. |
 | `--branch-prefix` | no | Glob for orphan branch sweep. Default: `wt-*`. |
-| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.sandbox/worktrees`. |
+| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.worktree/worktrees`. |
 
 Phases: reflection rescue, git worktree metadata prune, TTL marker reclaim with heartbeat owner checks, proactive marker release for merged clean worktrees, merged worktree cleanup, orphan branch sweep, residual dir sweep.
 
@@ -74,12 +74,12 @@ Hardcoded timing constants:
 
 Exit: always `0`. Prints a multi-line report on stdout if any action was taken; silent otherwise.
 
-### `sandbox-cleanup`
+### `worktree-cleanup`
 
 Session cleanup: capture-commit pending work, self-release merged clean marker, then lifecycle.
 
 ```powershell
-node core/cmd/sandbox-cleanup.ts --repo <dir> --session <id> [--trust-dead] [--worktrees-dir <rel>] [--branch-prefix <glob>]
+node core/cmd/worktree-cleanup.ts --repo <dir> --session <id> [--trust-dead] [--worktrees-dir <rel>] [--branch-prefix <glob>]
 ```
 
 | Flag | Required | Description |
@@ -87,10 +87,10 @@ node core/cmd/sandbox-cleanup.ts --repo <dir> --session <id> [--trust-dead] [--w
 | `--repo` | yes | Main repo path. |
 | `--session` | yes | Session identifier. |
 | `--trust-dead` | no | Treat the owning session as definitely ended. Intended for OpenCode session deletion and process-exit cleanup paths. |
-| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.sandbox/worktrees`. |
+| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.worktree/worktrees`. |
 | `--branch-prefix` | no | Glob for orphan branch sweep. Default: `wt-*`. |
 
-Phases: capture-commit pending work unless merge/rebase/detached HEAD state is in progress, self-release marker if branch is merged into main and worktree is clean, refresh surviving marker, invoke `sandbox-lifecycle`.
+Phases: capture-commit pending work unless merge/rebase/detached HEAD state is in progress, self-release marker if branch is merged into main and worktree is clean, refresh surviving marker, invoke `worktree-lifecycle`.
 
 Exit: always `0` (fail-open). Diagnostic output goes to stderr.
 
@@ -106,12 +106,12 @@ Environment: `REFLECTION_RESCUE_DIR` sets the relative sidecar directory to scan
 
 Exit: always `0` after argument validation. Missing repos, missing worktrees, and copy/delete failures fail open.
 
-### `sandbox-merge-gate`
+### `worktree-merge-gate`
 
 Pre-merge validation. Called from the installed `pre-merge-commit` git hook.
 
 ```powershell
-node core/cmd/sandbox-merge-gate.ts --worktree <dir>
+node core/cmd/worktree-merge-gate.ts --worktree <dir>
 ```
 
 Blocks merge if the worktree has tracked modifications or untracked files.
@@ -124,14 +124,14 @@ OpenCode support is plugin-first:
 
 | Component | Role |
 |---|---|
-| OpenCode server plugin | Loads from `.opencode/plugins/`, schedules worktree detection/creation on `session.created` or the first session-aware hook, injects system context, waits for worktree readiness before supported tool execution, propagates worktree env vars via `shell.env`, maps supported built-in tool paths into the session worktree, blocks explicit main-repo write targets in-process, refreshes markers, and schedules `sandbox-cleanup.ts --trust-dead` on `session.deleted` or process exit. |
+| OpenCode server plugin | Loads from `.opencode/plugins/`, schedules worktree detection/creation on `session.created` or the first session-aware hook, injects system context, waits for worktree readiness before supported tool execution, propagates worktree env vars via `shell.env`, maps supported built-in tool paths into the session worktree, blocks explicit main-repo write targets in-process, refreshes markers, and schedules `worktree-cleanup.ts --trust-dead` on `session.deleted` or process exit. |
 | OpenCode TUI plugin | Loads from `.opencode/tui.json`, renders a modified-files list from the worktree git diff, refreshes branch metadata from git `HEAD` filesystem events when available, subscribes to OpenCode bus events, and uses async git/filesystem refreshes to avoid blocking the UI. |
 | `--with-opencode-permissions` install option | Idempotently merges conservative native OpenCode permission defaults into root `opencode.json` without overwriting existing user rules. |
 | `--with-opencode-os-sandbox` install option | Adds the external `opencode-sandbox` npm plugin to root `opencode.json`. |
 
 OpenCode does not expose a pre-bootstrap hook that mutates its already-created instance `directory` or `worktree`. The plugin therefore virtualizes supported built-in tool paths into the worktree instead of moving the process cwd. Worktree bootstrap is asynchronous: prompt/system hooks may report a pending worktree, but supported tool hooks must wait for readiness before mapping paths or injecting shell env.
 
-The installed server plugin default export is `{ id: "uplift.worktree", server: WorktreeSandbox }`. The named `WorktreeSandbox` export remains available for smoke tests.
+The installed server plugin default export is `{ id: "uplift.worktree", server: WorktreePlugin }`. The named `WorktreePlugin` export remains available for smoke tests.
 
 OpenCode compatibility checks belong in tests whenever OpenCode is upgraded: verify `event`, `tool.execute.before`, `shell.env`, `tool.definition`, `experimental.chat.system.transform`, TUI event names, and local project plugin loading. `OPENCODE_PURE=1` skips project plugins and is not a valid adapter verification mode.
 
@@ -141,7 +141,7 @@ The OS sandbox option is adapter configuration only. It wraps OpenCode `bash` to
 
 | Hook | Purpose |
 |---|---|
-| `pre-merge-commit` | Gates worktree merges via `sandbox-merge-gate`; validates worktree cleanliness of the branch being merged. |
+| `pre-merge-commit` | Gates worktree merges via `worktree-merge-gate`; validates worktree cleanliness of the branch being merged. |
 | `post-merge` | Re-runs `install.ts` after every merge so installed worktree scripts and OpenCode plugin copies stay in sync with source. Runs in background and fails open. |
 
 ## Library Functions

@@ -7,7 +7,7 @@ const USAGE = "usage: worktree-spawn.ts --repo <dir> [-n <count>] [--worktrees-d
 export function worktreeSpawn(argv: string[]): number {
   let repo = ""
   let count = 1
-  let worktreesDir = ".sandbox/worktrees"
+  let worktreesDir = ".worktree/worktrees"
   let branchPrefix = "wt"
   let printOnly = false
   let copyDirty = true

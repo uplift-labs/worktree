@@ -12,7 +12,7 @@ test("marker helpers preserve contract fields", () => {
   const common = path.join(root, ".git")
   const marker = markerPath(common, "oc/session:1")
   assert.equal(markerSafeId("oc/session:1"), "oc-session-1")
-  assert.ok(marker.endsWith(path.join("sandbox-markers", "oc-session-1")))
+  assert.ok(marker.endsWith(path.join("worktree-markers", "oc-session-1")))
   assert.equal(markerWrite(marker, "wt-oc-session-1", "abc123"), true)
   assert.equal(markerReadValue(marker), "wt-oc-session-1")
   assert.equal(markerReadInitialHead(marker), "abc123")
@@ -29,29 +29,29 @@ test("scanUncommitted counts tracked and untracked files", () => {
   assert.match(scan.summary, /1 modified, 1 untracked/)
 })
 
-test("sandbox init, guard, and merge gate run through TypeScript CLIs", () => {
+test("worktree init, guard, and merge gate run through TypeScript CLIs", () => {
   const repo = initRepo("core")
-  const init = nodeScript("core/cmd/sandbox-init.ts", ["--repo", repo, "--session", "oc-core", "--worktrees-dir", ".sandbox/worktrees"])
+  const init = nodeScript("core/cmd/worktree-init.ts", ["--repo", repo, "--session", "oc-core", "--worktrees-dir", ".worktree/worktrees"])
   assert.equal(init.status, 0, init.stderr || init.stdout)
   const worktree = init.stdout.trim()
   assert.ok(fs.existsSync(worktree), worktree)
-  assert.ok(fs.existsSync(path.join(repo, ".git", "sandbox-markers", "oc-core")))
+  assert.ok(fs.existsSync(path.join(repo, ".git", "worktree-markers", "oc-core")))
 
-  const blocked = nodeScript("core/cmd/sandbox-guard.ts", ["--repo", repo, "--session", "oc-core", "--file", path.join(repo, "README.md"), "--worktrees-dir", ".sandbox/worktrees"])
+  const blocked = nodeScript("core/cmd/worktree-guard.ts", ["--repo", repo, "--session", "oc-core", "--file", path.join(repo, "README.md"), "--worktrees-dir", ".worktree/worktrees"])
   assert.equal(blocked.status, 1)
-  assert.match(blocked.stdout, /sandbox-guard: edit blocked/)
+  assert.match(blocked.stdout, /worktree-guard: edit blocked/)
 
-  const allowed = nodeScript("core/cmd/sandbox-guard.ts", ["--repo", repo, "--session", "oc-core", "--file", path.join(worktree, "README.md"), "--worktrees-dir", ".sandbox/worktrees"])
+  const allowed = nodeScript("core/cmd/worktree-guard.ts", ["--repo", repo, "--session", "oc-core", "--file", path.join(worktree, "README.md"), "--worktrees-dir", ".worktree/worktrees"])
   assert.equal(allowed.status, 0)
 
   fs.writeFileSync(path.join(worktree, "dirty.txt"), "dirty\n", "utf8")
-  const gate = nodeScript("core/cmd/sandbox-merge-gate.ts", ["--worktree", worktree])
+  const gate = nodeScript("core/cmd/worktree-merge-gate.ts", ["--worktree", worktree])
   assert.equal(gate.status, 1)
-  assert.match(gate.stdout, /sandbox-merge-gate: BLOCKED/)
+  assert.match(gate.stdout, /worktree-merge-gate: BLOCKED/)
 
   git(worktree, ["add", "dirty.txt"])
   git(worktree, ["commit", "-m", "add dirty"])
-  const cleanGate = nodeScript("core/cmd/sandbox-merge-gate.ts", ["--worktree", worktree])
+  const cleanGate = nodeScript("core/cmd/worktree-merge-gate.ts", ["--worktree", worktree])
   assert.equal(cleanGate.status, 0, cleanGate.stdout)
 })
 
@@ -88,7 +88,7 @@ test("worktree spawn copies staged, unstaged, and untracked non-ignored state", 
 test("reflection rescue copies markdown sidecar files", () => {
   const repo = initRepo("rescue")
   const branch = "wt-oc-rescue"
-  const worktree = path.join(repo, ".sandbox", "worktrees", branch)
+  const worktree = path.join(repo, ".worktree", "worktrees", branch)
   fs.mkdirSync(path.join(worktree, ".reinforce", "reflections"), { recursive: true })
   fs.writeFileSync(path.join(worktree, ".reinforce", "reflections", "note.md"), "note\n", "utf8")
   const result = nodeScript("core/cmd/reflection-rescue.ts", ["--repo", repo])

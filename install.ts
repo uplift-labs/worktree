@@ -59,20 +59,20 @@ export function install(argv: string[]): number {
 
   const projectPluginDir = path.join(options.target, ".opencode", "plugins")
   fs.mkdirSync(projectPluginDir, { recursive: true })
-  console.log(`[install] writing OpenCode plugin to ${path.join(projectPluginDir, "worktree-sandbox.ts")}`)
-  fs.rmSync(path.join(projectPluginDir, "worktree-sandbox.js"), { force: true })
-  fs.copyFileSync(path.join(SCRIPT_DIR, "adapters", "opencode", "plugins", "worktree-sandbox.ts"), path.join(projectPluginDir, "worktree-sandbox.ts"))
+  console.log(`[install] writing OpenCode plugin to ${path.join(projectPluginDir, "worktree.ts")}`)
+  for (const stale of ["worktree.js", "worktree-sandbox.ts", "worktree-sandbox.js"]) fs.rmSync(path.join(projectPluginDir, stale), { force: true })
+  fs.copyFileSync(path.join(SCRIPT_DIR, "adapters", "opencode", "plugins", "worktree.ts"), path.join(projectPluginDir, "worktree.ts"))
 
   const tuiConfig = path.join(options.target, ".opencode", "tui.json")
   const tuiPluginDir = path.join(options.target, ".opencode", "tui-plugins")
   console.log(`[install] writing OpenCode TUI plugin to ${tuiPluginDir}`)
   fs.mkdirSync(tuiPluginDir, { recursive: true })
-  for (const stale of ["worktree-sandbox-branch-core.js", "worktree-sandbox-branch-core.ts", "worktree-sandbox-branch.tsx"]) {
+  for (const stale of ["worktree-branch-core.js", "worktree-branch-core.ts", "worktree-branch.tsx", "worktree-sandbox-branch-core.js", "worktree-sandbox-branch-core.ts", "worktree-sandbox-branch.tsx"]) {
     fs.rmSync(path.join(tuiPluginDir, stale), { force: true })
   }
   copyMatching(path.join(SCRIPT_DIR, "adapters", "opencode", "tui"), tuiPluginDir, [".ts", ".tsx"])
   console.log(`[install] adding OpenCode TUI branch plugin to ${tuiConfig}`)
-  mergePluginConfig(tuiConfig, "https://opencode.ai/tui.json", "./tui-plugins/worktree-sandbox-branch.tsx")
+  mergePluginConfig(tuiConfig, "https://opencode.ai/tui.json", "./tui-plugins/worktree-branch.tsx")
 
   if (options.withOpenCodePermissions) {
     const cfg = path.join(options.target, "opencode.json")
@@ -223,7 +223,7 @@ import path from "node:path"
 const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" })
 if (repo.status !== 0) process.exit(0)
 const repoRoot = repo.stdout.trim()
-const gate = path.join(repoRoot, ${JSON.stringify(prefix)}, "worktree", "core", "cmd", "sandbox-merge-gate.ts")
+const gate = path.join(repoRoot, ${JSON.stringify(prefix)}, "worktree", "core", "cmd", "worktree-merge-gate.ts")
 const mergeShas = Object.keys(process.env).filter((name) => name.startsWith("GITHEAD_")).map((name) => name.slice("GITHEAD_".length))
 if (mergeShas.length === 0) process.exit(0)
 delete process.env.GIT_INDEX_FILE
@@ -233,18 +233,18 @@ delete process.env.GIT_PREFIX
 const list = spawnSync("git", ["worktree", "list", "--porcelain"], { encoding: "utf8", cwd: repoRoot })
 if (list.status !== 0) process.exit(0)
 let current = ""
-let sandbox = ""
+let worktree = ""
 for (const line of list.stdout.split(/\\r?\\n/)) {
   if (line.startsWith("worktree ")) current = line.slice("worktree ".length)
   if (line.startsWith("HEAD ") && mergeShas.includes(line.slice("HEAD ".length)) && current && path.resolve(current) !== path.resolve(repoRoot)) {
-    sandbox = current
+    worktree = current
     break
   }
 }
-if (!sandbox) process.exit(0)
-const result = spawnSync(process.execPath, [gate, "--worktree", sandbox], { encoding: "utf8", cwd: repoRoot })
+if (!worktree) process.exit(0)
+const result = spawnSync(process.execPath, [gate, "--worktree", worktree], { encoding: "utf8", cwd: repoRoot })
 if (result.status !== 0) {
-  process.stderr.write(result.stdout || result.stderr || "sandbox merge gate failed\n")
+  process.stderr.write(result.stdout || result.stderr || "worktree merge gate failed\n")
   process.exit(1)
 }
 process.exit(0)

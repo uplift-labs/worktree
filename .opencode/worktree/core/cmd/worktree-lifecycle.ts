@@ -10,16 +10,16 @@ import { scanUncommitted } from "../lib/scan-uncommitted.ts"
 import { pruneWorktreeMetadata, removeIfMerged, sweepOrphanBranches, sweepResidualDirs } from "../lib/wt-cleanup.ts"
 import { reflectionRescue } from "./reflection-rescue.ts"
 
-const USAGE = "usage: sandbox-lifecycle.ts --repo <dir> [--ttl <seconds>] [--branch-prefix <glob>] [--worktrees-dir <rel>]"
+const USAGE = "usage: worktree-lifecycle.ts --repo <dir> [--ttl <seconds>] [--branch-prefix <glob>] [--worktrees-dir <rel>]"
 const ORPHAN_HB_GRACE = 7200
 const FRESH_SESSION_TTL = 300
-const SANDBOX_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+const WORKTREE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
-export function sandboxLifecycle(argv: string[], options: { quiet?: boolean } = {}): number {
+export function worktreeLifecycle(argv: string[], options: { quiet?: boolean } = {}): number {
   let repo = ""
   let ttl = 5
   let branchPrefix = "wt-*"
-  let worktreesDir = ".sandbox/worktrees"
+  let worktreesDir = ".worktree/worktrees"
 
   for (let i = 0; i < argv.length;) {
     const arg = argv[i]
@@ -46,7 +46,7 @@ export function sandboxLifecycle(argv: string[], options: { quiet?: boolean } = 
     return 0
   }
   const mainBranch = resolveMainBranch(root)
-  const markersDir = path.join(common, "sandbox-markers")
+  const markersDir = path.join(common, "worktree-markers")
   let removed = 0
   const lines: string[] = []
 
@@ -64,7 +64,7 @@ export function sandboxLifecycle(argv: string[], options: { quiet?: boolean } = 
           killHeartbeatPid(marker)
           safeRm(marker)
           safeRm(`${marker}.hb`)
-          cleanupLog(SANDBOX_ROOT, "PRUNE", path.basename(marker), branch, "lifecycle-phase2-orphan-marker")
+          cleanupLog(WORKTREE_ROOT, "PRUNE", path.basename(marker), branch, "lifecycle-phase2-orphan-marker")
           continue
         }
       }
@@ -91,7 +91,7 @@ export function sandboxLifecycle(argv: string[], options: { quiet?: boolean } = 
       if (!markerIsFresh(marker, effectiveTtl)) {
         safeRm(marker)
         safeRm(`${marker}.hb`)
-        cleanupLog(SANDBOX_ROOT, "PRUNE", path.basename(marker), branch || "-", `lifecycle-phase2-ttl-reclaim ttl=${effectiveTtl}`)
+        cleanupLog(WORKTREE_ROOT, "PRUNE", path.basename(marker), branch || "-", `lifecycle-phase2-ttl-reclaim ttl=${effectiveTtl}`)
       }
     }
   }
@@ -113,7 +113,7 @@ export function sandboxLifecycle(argv: string[], options: { quiet?: boolean } = 
       if (git(["merge-base", "--is-ancestor", branch, mainBranch], worktree).status === 0 && scanUncommitted(worktree, { ignoreDeletions: true }).clean) {
         safeRm(marker)
         safeRm(`${marker}.hb`)
-        cleanupLog(SANDBOX_ROOT, "RELEASE", path.basename(marker), branch, "lifecycle-phase3-proactive-release")
+        cleanupLog(WORKTREE_ROOT, "RELEASE", path.basename(marker), branch, "lifecycle-phase3-proactive-release")
       }
     }
   }
@@ -135,11 +135,11 @@ export function sandboxLifecycle(argv: string[], options: { quiet?: boolean } = 
     if (status.removed) {
       removed += 1
       lines.push(status.line)
-      cleanupLog(SANDBOX_ROOT, "DESTROY", "-", worktree.branch, "lifecycle-phase4-wt-remove")
+      cleanupLog(WORKTREE_ROOT, "DESTROY", "-", worktree.branch, "lifecycle-phase4-wt-remove")
     } else if (status.preserved) {
       lines.push(status.line)
       preservedBranches += ` ${worktree.branch} `
-      cleanupLog(SANDBOX_ROOT, "PRESERVE", "-", worktree.branch, "lifecycle-phase4-preserve")
+      cleanupLog(WORKTREE_ROOT, "PRESERVE", "-", worktree.branch, "lifecycle-phase4-preserve")
     }
   }
 
@@ -148,7 +148,7 @@ export function sandboxLifecycle(argv: string[], options: { quiet?: boolean } = 
 
   const printable = lines.filter(Boolean)
   if (!options.quiet && printable.length > 0) {
-    console.log(`sandbox-lifecycle: cleaned=${removed}`)
+    console.log(`worktree-lifecycle: cleaned=${removed}`)
     console.log(printable.join("\n"))
   }
   return 0
@@ -239,7 +239,7 @@ function killDeadHeartbeat(marker: string): number {
 
 if (isMainModule(import.meta.url)) {
   try {
-    process.exit(sandboxLifecycle(process.argv.slice(2)))
+    process.exit(worktreeLifecycle(process.argv.slice(2)))
   } catch (error) {
     if (error instanceof UsageError) {
       console.error(error.message)

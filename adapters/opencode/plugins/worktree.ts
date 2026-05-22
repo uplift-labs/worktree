@@ -4,7 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
-export const WORKTREE_SANDBOX_PLUGIN_ID = "uplift.worktree"
+export const WORKTREE_PLUGIN_ID = "uplift.worktree"
 
 const LOG_SERVICE = "worktree"
 
@@ -20,7 +20,7 @@ type PluginInput = {
   worktree?: string
   client?: OpenCodeClient
 }
-type SandboxConfig = {
+type WorktreeConfig = {
   active: boolean
   session: string
   repo: string
@@ -32,7 +32,7 @@ type SandboxConfig = {
   branchGlob: string
   auto: boolean
 }
-type SandboxContext = Partial<SandboxConfig> & {
+type WorktreeContext = Partial<WorktreeConfig> & {
   active: boolean
   session: string
 }
@@ -40,18 +40,18 @@ type BootstrapStatus = "preparing" | "pending" | "ready" | "inactive" | "failed"
 type BootstrapEntry = {
   session: string
   status: BootstrapStatus
-  cfg: SandboxConfig
+  cfg: WorktreeConfig
   enforce: boolean
   cancelled?: boolean
-  contextPromise: Promise<SandboxContext> | null
-  initPromise: Promise<SandboxConfig> | null
-  promise: Promise<SandboxConfig> | null
+  contextPromise: Promise<WorktreeContext> | null
+  initPromise: Promise<WorktreeConfig> | null
+  promise: Promise<WorktreeConfig> | null
   log?: LogFn | null
 }
 type ExecOptions = ExecFileOptions & { cwd?: string }
 
 const state = {
-  sessions: new Map<string, SandboxConfig>(),
+  sessions: new Map<string, WorktreeConfig>(),
   bootstraps: new Map<string, BootstrapEntry>(),
   warnings: new Map<string, string>(),
   heartbeats: new Map<string, ChildProcess>(),
@@ -62,12 +62,12 @@ const state = {
 const PATH_TOOLS = new Set(["read", "edit", "write", "lsp"])
 const SEARCH_TOOLS = new Set(["grep", "glob"])
 const PATCH_TOOLS = new Set(["apply_patch", "patch"])
-const SANDBOXED_TOOLS = new Set([...PATH_TOOLS, ...SEARCH_TOOLS, ...PATCH_TOOLS, "bash"])
+const WORKTREE_TOOLS = new Set([...PATH_TOOLS, ...SEARCH_TOOLS, ...PATCH_TOOLS, "bash"])
 const DEFAULT_EXEC_MAX_BUFFER = 10 * 1024 * 1024
 const DEFAULT_GIT_TIMEOUT_MS = 3000
 const PENDING_SYSTEM_CONTEXT = [
   "worktree isolation is preparing a worktree for this session.",
-  "Use relative project paths; supported tools will be routed to the sandbox before execution.",
+  "Use relative project paths; supported tools will be routed to the worktree before execution.",
   "Do not target the main repository path directly.",
 ].join(" ")
 const CHECKING_SYSTEM_CONTEXT = [
@@ -168,18 +168,18 @@ function compactOpenCodeSessionID(value: unknown): string {
   return `oc-${legacy.slice(0, 24)}`
 }
 
-function sandboxSessionID(sessionID: unknown): string {
+function worktreeSessionID(sessionID: unknown): string {
   return compactOpenCodeSessionID(sessionID || envValue("OPENCODE_RUN_ID") || `${Date.now()}-${process.pid}`)
 }
 
-function emptyConfig(): SandboxConfig {
+function emptyConfig(): WorktreeConfig {
   return {
     active: false,
     session: "",
     repo: "",
     root: "",
     worktree: "",
-    worktreesDir: ".sandbox/worktrees",
+    worktreesDir: ".worktree/worktrees",
     branchPrefix: "wt",
     branchGlob: "wt-*",
     auto: false,
@@ -187,12 +187,12 @@ function emptyConfig(): SandboxConfig {
 }
 
 async function hasCoreAsync(root: string): Promise<boolean> {
-  return !!root && (await pathExistsAsync(path.join(root, "core", "cmd", "sandbox-init.ts")))
+  return !!root && (await pathExistsAsync(path.join(root, "core", "cmd", "worktree-init.ts")))
 }
 
-async function findSandboxRootAsync(repo: string): Promise<string> {
+async function findWorktreeRootAsync(repo: string): Promise<string> {
   const candidates: string[] = []
-  if (envValue("OPENCODE_SANDBOX_ROOT")) candidates.push(envValue("OPENCODE_SANDBOX_ROOT"))
+  if (envValue("OPENCODE_WORKTREE_ROOT")) candidates.push(envValue("OPENCODE_WORKTREE_ROOT"))
   if (repo) {
     candidates.push(path.join(repo, ".opencode", "worktree"))
   }
@@ -234,16 +234,16 @@ async function resolveGitCommonDirAsync(repo: string): Promise<string> {
 }
 
 function worktreesDir(repo: string, root: string): string {
-  if (envValue("WORKTREE_SANDBOX_WORKTREES_DIR")) return envValue("WORKTREE_SANDBOX_WORKTREES_DIR")
-  if (envValue("OPENCODE_SANDBOX_WORKTREES_DIR")) return envValue("OPENCODE_SANDBOX_WORKTREES_DIR")
+  if (envValue("WORKTREE_WORKTREES_DIR")) return envValue("WORKTREE_WORKTREES_DIR")
+  if (envValue("OPENCODE_WORKTREES_DIR")) return envValue("OPENCODE_WORKTREES_DIR")
   if (repo && root && isWithin(root, repo) && normalize(root) !== normalize(repo)) {
     return `${toPosix(path.relative(repo, root))}/worktrees`
   }
-  return ".sandbox/worktrees"
+  return ".worktree/worktrees"
 }
 
 function branchPrefix(): string {
-  return envValue("WORKTREE_SANDBOX_BRANCH_PREFIX") || envValue("OPENCODE_SANDBOX_BRANCH_PREFIX") || "wt"
+  return envValue("WORKTREE_BRANCH_PREFIX") || envValue("OPENCODE_WORKTREE_BRANCH_PREFIX") || "wt"
 }
 
 function branchGlob(prefix: string): string {
@@ -275,31 +275,31 @@ function execFileAsync(command: string, args: string[], options: ExecOptions = {
   })
 }
 
-async function execSandboxAsync(root: string, rel: string, args: string[], options: ExecOptions = {}): Promise<string> {
+async function execWorktreeAsync(root: string, rel: string, args: string[], options: ExecOptions = {}): Promise<string> {
   return execFileAsync(process.execPath, [path.join(root, rel), ...args], {
     cwd: options.cwd || root,
     ...options,
   })
 }
 
-async function markerPathAsync(cfg: SandboxConfig): Promise<string> {
+async function markerPathAsync(cfg: WorktreeConfig): Promise<string> {
   if (cfg.marker) return cfg.marker
   const common = await resolveGitCommonDirAsync(cfg.repo)
-  return common ? path.join(common, "sandbox-markers", cfg.session) : ""
+  return common ? path.join(common, "worktree-markers", cfg.session) : ""
 }
 
-function setProcessEnv(cfg: SandboxConfig): void {
-  process.env.OPENCODE_SANDBOX_ACTIVE = "1"
-  process.env.OPENCODE_SANDBOX_SOURCE = "opencode-plugin"
-  process.env.OPENCODE_SANDBOX_SESSION = cfg.session
-  process.env.OPENCODE_SANDBOX_REPO = cfg.repo
-  process.env.OPENCODE_SANDBOX_ROOT = cfg.root
-  process.env.OPENCODE_SANDBOX_WORKTREE = cfg.worktree
-  process.env.OPENCODE_SANDBOX_WORKTREES_DIR = cfg.worktreesDir
-  process.env.OPENCODE_SANDBOX_BRANCH_PREFIX = cfg.branchPrefix
+function setProcessEnv(cfg: WorktreeConfig): void {
+  process.env.OPENCODE_WORKTREE_ACTIVE = "1"
+  process.env.OPENCODE_WORKTREE_SOURCE = "opencode-plugin"
+  process.env.OPENCODE_WORKTREE_SESSION = cfg.session
+  process.env.OPENCODE_WORKTREE_REPO = cfg.repo
+  process.env.OPENCODE_WORKTREE_ROOT = cfg.root
+  process.env.OPENCODE_WORKTREE_PATH = cfg.worktree
+  process.env.OPENCODE_WORKTREES_DIR = cfg.worktreesDir
+  process.env.OPENCODE_WORKTREE_BRANCH_PREFIX = cfg.branchPrefix
 }
 
-async function touchMarkerAsync(cfg: SandboxConfig): Promise<void> {
+async function touchMarkerAsync(cfg: WorktreeConfig): Promise<void> {
   const marker = await markerPathAsync(cfg)
   if (!marker || !(await pathExistsAsync(marker))) return
   const now = new Date()
@@ -310,7 +310,7 @@ async function touchMarkerAsync(cfg: SandboxConfig): Promise<void> {
   }
 }
 
-function killHeartbeatProcess(cfg: SandboxConfig): void {
+function killHeartbeatProcess(cfg: WorktreeConfig): void {
   const hb = state.heartbeats.get(cfg.session)
   if (hb) {
     try {
@@ -322,7 +322,7 @@ function killHeartbeatProcess(cfg: SandboxConfig): void {
   }
 }
 
-async function killHeartbeatAsync(cfg: SandboxConfig): Promise<void> {
+async function killHeartbeatAsync(cfg: WorktreeConfig): Promise<void> {
   killHeartbeatProcess(cfg)
 
   const marker = await markerPathAsync(cfg)
@@ -344,7 +344,7 @@ async function killHeartbeatAsync(cfg: SandboxConfig): Promise<void> {
   }
 }
 
-function cleanupArgs(cfg: SandboxConfig): string[] {
+function cleanupArgs(cfg: WorktreeConfig): string[] {
   return [
     "--repo",
     cfg.repo,
@@ -358,28 +358,28 @@ function cleanupArgs(cfg: SandboxConfig): string[] {
   ]
 }
 
-async function cleanupConfigAsync(cfg: SandboxConfig, log: LogFn | null = null): Promise<void> {
+async function cleanupConfigAsync(cfg: WorktreeConfig, log: LogFn | null = null): Promise<void> {
   if (!cfg.active || !cfg.auto) return
   await killHeartbeatAsync(cfg)
   try {
-    await execSandboxAsync(cfg.root, "core/cmd/sandbox-cleanup.ts", cleanupArgs(cfg))
+    await execWorktreeAsync(cfg.root, "core/cmd/worktree-cleanup.ts", cleanupArgs(cfg))
   } catch (error) {
     if (typeof log === "function") {
-      await log("warn", "sandbox cleanup failed", {
+      await log("warn", "worktree cleanup failed", {
         session: cfg.session,
         worktree: cfg.worktree,
-        warning: warningFromError(error, "sandbox cleanup failed"),
+        warning: warningFromError(error, "worktree cleanup failed"),
       })
     }
-    // Fail open. Stale markers are still TTL-managed by sandbox-lifecycle.
+    // Fail open. Stale markers are still TTL-managed by worktree-lifecycle.
   }
 }
 
-function cleanupConfigDetached(cfg: SandboxConfig): void {
+function cleanupConfigDetached(cfg: WorktreeConfig): void {
   if (!cfg.active || !cfg.auto) return
   killHeartbeatProcess(cfg)
   try {
-    const child = spawn(process.execPath, [path.join(cfg.root, "core/cmd/sandbox-cleanup.ts"), ...cleanupArgs(cfg)], {
+    const child = spawn(process.execPath, [path.join(cfg.root, "core/cmd/worktree-cleanup.ts"), ...cleanupArgs(cfg)], {
       cwd: cfg.root,
       detached: true,
       stdio: "ignore",
@@ -399,7 +399,7 @@ function registerProcessCleanup(): void {
   })
 }
 
-async function launchHeartbeatAsync(cfg: SandboxConfig): Promise<void> {
+async function launchHeartbeatAsync(cfg: WorktreeConfig): Promise<void> {
   const marker = await markerPathAsync(cfg)
   if (!marker || !(await pathExistsAsync(marker))) return
 
@@ -413,7 +413,7 @@ async function launchHeartbeatAsync(cfg: SandboxConfig): Promise<void> {
       marker,
       "--repo",
       cfg.repo,
-      "--sandbox-root",
+      "--worktree-root",
       cfg.root,
       "--worktrees-dir",
       cfg.worktreesDir,
@@ -479,31 +479,31 @@ function lifecycleArgs(ctx) {
   ]
 }
 
-async function runSandboxInit(ctx) {
-  return (await execSandboxAsync(ctx.root, "core/cmd/sandbox-init.ts", initArgs(ctx))).trim()
+async function runWorktreeInit(ctx) {
+  return (await execWorktreeAsync(ctx.root, "core/cmd/worktree-init.ts", initArgs(ctx))).trim()
 }
 
-async function runSandboxLifecycle(ctx) {
-  return execSandboxAsync(ctx.root, "core/cmd/sandbox-lifecycle.ts", lifecycleArgs(ctx))
+async function runWorktreeLifecycle(ctx) {
+  return execWorktreeAsync(ctx.root, "core/cmd/worktree-lifecycle.ts", lifecycleArgs(ctx))
 }
 
 async function prepareSessionContextAsync(sessionID, baseDirectory) {
-  const session = sandboxSessionID(sessionID)
+  const session = worktreeSessionID(sessionID)
   const repo = await resolveRepoAsync(baseDirectory)
   if (!repo) return { session, active: false }
 
   const branch = await currentBranchAsync(repo)
   if (branch !== "main" && branch !== "master") return { session, active: false }
 
-  const root = await findSandboxRootAsync(repo)
+  const root = await findWorktreeRootAsync(repo)
   if (!root) {
-    state.warnings.set(session, "installed sandbox core not found")
+    state.warnings.set(session, "installed worktree core not found")
     return { session, active: false }
   }
 
   const brPrefix = branchPrefix()
   const common = await resolveGitCommonDirAsync(repo)
-  const marker = common ? path.join(common, "sandbox-markers", session) : ""
+  const marker = common ? path.join(common, "worktree-markers", session) : ""
   return {
     active: true,
     session,
@@ -522,35 +522,35 @@ async function createSessionConfigAsync(ctx, entry) {
 
   try {
     const startedAt = Date.now()
-    worktree = await runSandboxInit(ctx)
+    worktree = await runWorktreeInit(ctx)
     bootstrapDebug(ctx.session, "init", startedAt)
   } catch (error) {
-    firstWarning = warningFromError(error, "sandbox creation failed")
+    firstWarning = warningFromError(error, "worktree creation failed")
 
     try {
       const lifecycleStartedAt = Date.now()
-      await runSandboxLifecycle(ctx)
+      await runWorktreeLifecycle(ctx)
       bootstrapDebug(ctx.session, "lifecycle-retry-prepass", lifecycleStartedAt)
     } catch {
-      // Lifecycle is only a cleanup pre-pass; sandbox-init retry decides safety.
+      // Lifecycle is only a cleanup pre-pass; worktree-init retry decides safety.
     }
 
     try {
       const retryStartedAt = Date.now()
-      worktree = await runSandboxInit(ctx)
+      worktree = await runWorktreeInit(ctx)
       bootstrapDebug(ctx.session, "init-retry", retryStartedAt)
     } catch (retryError) {
-      const warning = warningFromError(retryError, firstWarning || "sandbox creation failed")
+      const warning = warningFromError(retryError, firstWarning || "worktree creation failed")
       entry.status = entry.cancelled ? "cancelled" : "failed"
       entry.cfg = emptyConfig()
       if (entry.cancelled) state.bootstraps.delete(ctx.session)
       if (!entry.cancelled) {
-        state.warnings.set(ctx.session, warning || "sandbox creation failed")
+        state.warnings.set(ctx.session, warning || "worktree creation failed")
         if (entry.log) {
-          await entry.log("error", "sandbox bootstrap failed", {
+          await entry.log("error", "worktree bootstrap failed", {
             session: ctx.session,
             repo: ctx.repo,
-            warning: warning || "sandbox creation failed",
+            warning: warning || "worktree creation failed",
           })
         }
       }
@@ -559,7 +559,7 @@ async function createSessionConfigAsync(ctx, entry) {
   }
 
   if (firstWarning && entry.log) {
-    await entry.log("warn", "sandbox init recovered after lifecycle retry", {
+    await entry.log("warn", "worktree init recovered after lifecycle retry", {
       session: ctx.session,
       repo: ctx.repo,
       warning: firstWarning,
@@ -588,7 +588,7 @@ async function createSessionConfigAsync(ctx, entry) {
 
   if (entry.cancelled) {
     if (entry.log) {
-      await entry.log("info", "sandbox bootstrap cancelled", {
+      await entry.log("info", "worktree bootstrap cancelled", {
         session: cfg.session,
         worktree: cfg.worktree,
       })
@@ -612,14 +612,14 @@ async function createSessionConfigAsync(ctx, entry) {
   registerProcessCleanup()
 
   if (entry.log) {
-    await entry.log("info", "sandbox ready", {
+    await entry.log("info", "worktree ready", {
       session: cfg.session,
       repo: cfg.repo,
       worktree: cfg.worktree,
     })
   }
 
-  void runSandboxLifecycle(ctx).catch(() => {
+  void runWorktreeLifecycle(ctx).catch(() => {
     // Post-ready cleanup is best-effort and must not affect the active session.
   })
 
@@ -631,9 +631,9 @@ function failBootstrap(entry, session, error) {
   entry.cfg = emptyConfig()
   if (entry.cancelled) state.bootstraps.delete(session)
   if (!entry.cancelled) {
-    const warning = warningFromError(error, "sandbox creation failed")
+    const warning = warningFromError(error, "worktree creation failed")
     state.warnings.set(session, warning)
-    if (entry.log) void entry.log("error", "sandbox bootstrap failed", { session, warning })
+    if (entry.log) void entry.log("error", "worktree bootstrap failed", { session, warning })
   }
   return entry.cfg
 }
@@ -696,9 +696,9 @@ function readyBootstrap(cfg) {
 
 function bootstrapFor(sessionID, baseDirectory, log = null) {
   const raw = sessionID || state.currentSession
-  if (!raw || envValue("OPENCODE_SANDBOX_AUTO") !== "1") return inactiveBootstrap()
+  if (!raw || envValue("OPENCODE_WORKTREE_AUTO") !== "1") return inactiveBootstrap()
 
-  const session = sandboxSessionID(raw)
+  const session = worktreeSessionID(raw)
   const ready = state.sessions.get(session)
   if (ready) return readyBootstrap(ready)
 
@@ -724,7 +724,7 @@ function bootstrapFor(sessionID, baseDirectory, log = null) {
 function readyConfigFor(sessionID) {
   const raw = sessionID || state.currentSession
   if (!raw) return emptyConfig()
-  return state.sessions.get(sandboxSessionID(raw)) || emptyConfig()
+  return state.sessions.get(worktreeSessionID(raw)) || emptyConfig()
 }
 
 async function configForTool(sessionID, baseDirectory, log = null) {
@@ -736,7 +736,7 @@ async function configForTool(sessionID, baseDirectory, log = null) {
   if (cfg.active) return cfg
 
   if (entry.status === "failed" && entry.enforce) {
-    const warning = warningFor(entry.session) || "sandbox creation failed"
+    const warning = warningFor(entry.session) || "worktree creation failed"
     throw new Error(`worktree: ${warning}`)
   }
 
@@ -744,11 +744,11 @@ async function configForTool(sessionID, baseDirectory, log = null) {
 }
 
 function warningFor(sessionID) {
-  const session = sandboxSessionID(sessionID || state.currentSession)
+  const session = worktreeSessionID(sessionID || state.currentSession)
   return state.warnings.get(session) || ""
 }
 
-function mapPathToSandbox(cfg, file, base) {
+function mapPathToWorktree(cfg, file, base) {
   const abs = absolutize(file, base)
   if (!abs || !cfg.active) return abs
   if (isWithin(abs, cfg.worktree)) return abs
@@ -762,14 +762,14 @@ function mapPathToSandbox(cfg, file, base) {
   return abs
 }
 
-function mapImplicitPathToSandbox(cfg, file, base) {
+function mapImplicitPathToWorktree(cfg, file, base) {
   const abs = absolutize(file, base)
   if (isExplicitAbsolute(file) && isWithin(abs, cfg.repo) && !isWithin(abs, cfg.worktree)) return abs
-  return mapPathToSandbox(cfg, file, base)
+  return mapPathToWorktree(cfg, file, base)
 }
 
 function mapPatchPath(cfg, file, base) {
-  const target = mapImplicitPathToSandbox(cfg, file, base)
+  const target = mapImplicitPathToWorktree(cfg, file, base)
   if (isWithin(target, base)) return toPosix(path.relative(base, target)) || "."
   return toPosix(target)
 }
@@ -802,7 +802,7 @@ function guardPath(cfg, file) {
 
   if (isWithin(target, cfg.repo)) {
     throw new Error(
-      `sandbox-guard: edit blocked - session ${cfg.session} has sandbox at ${cfg.worktree}, but target is in main repo (${target}). Edit the sandbox copy and merge via git.`,
+      `worktree-guard: edit blocked - session ${cfg.session} has worktree at ${cfg.worktree}, but target is in main repo (${target}). Edit the worktree and merge via git.`,
     )
   }
 }
@@ -827,8 +827,8 @@ async function enforcePathGuard(cfg, file, log, extra = {}) {
 function commandMentionsMainRepo(cfg, command) {
   const normalized = toPosix(String(command || "")).toLowerCase()
   const repo = toPosix(cfg.repo).toLowerCase()
-  const sandbox = toPosix(cfg.worktree).toLowerCase()
-  return normalized.includes(repo) && !normalized.includes(sandbox)
+  const worktree = toPosix(cfg.worktree).toLowerCase()
+  return normalized.includes(repo) && !normalized.includes(worktree)
 }
 
 function eventSessionID(event) {
@@ -836,26 +836,26 @@ function eventSessionID(event) {
 }
 
 function injectShellEnv(cfg, output) {
-  output.env.OPENCODE_SANDBOX_ACTIVE = "1"
-  output.env.OPENCODE_SANDBOX_SESSION = cfg.session
-  output.env.OPENCODE_SANDBOX_REPO = cfg.repo
-  output.env.OPENCODE_SANDBOX_ROOT = cfg.root
-  output.env.OPENCODE_SANDBOX_WORKTREE = cfg.worktree
-  output.env.OPENCODE_SANDBOX_WORKTREES_DIR = cfg.worktreesDir
-  output.env.OPENCODE_SANDBOX_BRANCH_PREFIX = cfg.branchPrefix
+  output.env.OPENCODE_WORKTREE_ACTIVE = "1"
+  output.env.OPENCODE_WORKTREE_SESSION = cfg.session
+  output.env.OPENCODE_WORKTREE_REPO = cfg.repo
+  output.env.OPENCODE_WORKTREE_ROOT = cfg.root
+  output.env.OPENCODE_WORKTREE_PATH = cfg.worktree
+  output.env.OPENCODE_WORKTREES_DIR = cfg.worktreesDir
+  output.env.OPENCODE_WORKTREE_BRANCH_PREFIX = cfg.branchPrefix
 }
 
-function sandboxToolDefinition(output) {
+function worktreeToolDefinition(output) {
   const note = [
     "worktree isolation is active for this project.",
-    "Use OPENCODE_SANDBOX_WORKTREE as the project root for file operations.",
+    "Use OPENCODE_WORKTREE_PATH as the project root for file operations.",
     "Do not target the main repository path directly.",
   ].join(" ")
   if (!output.description || output.description.includes("worktree isolation is active")) return
   output.description = `${output.description}\n\n${note}`
 }
 
-export const WorktreeSandbox = async ({ directory, worktree, client }: PluginInput = {}) => {
+export const WorktreePlugin = async ({ directory, worktree, client }: PluginInput = {}) => {
   const baseDirectory = directory || worktree || process.cwd()
   const log = loggerFor(client)
 
@@ -877,7 +877,7 @@ export const WorktreeSandbox = async ({ directory, worktree, client }: PluginInp
       }
 
       if (event.type === "session.deleted") {
-        const session = sandboxSessionID(id)
+        const session = worktreeSessionID(id)
         const entry = state.bootstraps.get(session)
         if (entry) {
           entry.cancelled = true
@@ -885,7 +885,7 @@ export const WorktreeSandbox = async ({ directory, worktree, client }: PluginInp
         }
         const cfg = state.sessions.get(session)
         if (cfg) {
-          void log("info", "sandbox cleanup scheduled", {
+          void log("info", "worktree cleanup scheduled", {
             session: cfg.session,
             worktree: cfg.worktree,
           })
@@ -922,8 +922,8 @@ export const WorktreeSandbox = async ({ directory, worktree, client }: PluginInp
     },
 
     "tool.definition": async (input, output) => {
-      if (!input || !output || !SANDBOXED_TOOLS.has(input.toolID)) return
-      sandboxToolDefinition(output)
+      if (!input || !output || !WORKTREE_TOOLS.has(input.toolID)) return
+      worktreeToolDefinition(output)
     },
 
     "shell.env": async (input, output) => {
@@ -934,7 +934,7 @@ export const WorktreeSandbox = async ({ directory, worktree, client }: PluginInp
     },
 
     "tool.execute.before": async (input, output) => {
-      if (!input || !output || !SANDBOXED_TOOLS.has(input.tool)) return
+      if (!input || !output || !WORKTREE_TOOLS.has(input.tool)) return
       const cfg = await configForTool(input?.sessionID, baseDirectory, log)
       if (!cfg.active) return
 
@@ -943,13 +943,13 @@ export const WorktreeSandbox = async ({ directory, worktree, client }: PluginInp
       const cwd = absolutize(args.workdir || baseDirectory, baseDirectory)
 
       if (PATH_TOOLS.has(tool) && args.filePath) {
-        args.filePath = mapImplicitPathToSandbox(cfg, args.filePath, cwd)
+        args.filePath = mapImplicitPathToWorktree(cfg, args.filePath, cwd)
         await enforcePathGuard(cfg, args.filePath, log, { tool, callID: input.callID })
         return
       }
 
       if (SEARCH_TOOLS.has(tool)) {
-        args.path = args.path ? mapImplicitPathToSandbox(cfg, args.path, baseDirectory) : cfg.worktree
+        args.path = args.path ? mapImplicitPathToWorktree(cfg, args.path, baseDirectory) : cfg.worktree
         await enforcePathGuard(cfg, args.path, log, { tool, callID: input.callID })
         return
       }
@@ -969,7 +969,7 @@ export const WorktreeSandbox = async ({ directory, worktree, client }: PluginInp
       }
 
       if (tool === "bash") {
-        const nextCwd = args.workdir ? mapImplicitPathToSandbox(cfg, args.workdir, baseDirectory) : cfg.worktree
+        const nextCwd = args.workdir ? mapImplicitPathToWorktree(cfg, args.workdir, baseDirectory) : cfg.worktree
         args.workdir = nextCwd
         if (commandMentionsMainRepo(cfg, args.command)) {
           await log("warn", "blocked bash command mentioning main repo", {
@@ -980,7 +980,7 @@ export const WorktreeSandbox = async ({ directory, worktree, client }: PluginInp
             command: String(args.command || ""),
           })
           throw new Error(
-            `sandbox-guard: bash command mentions the main repo (${cfg.repo}). Run it from the sandbox instead: ${cfg.worktree}`,
+            `worktree-guard: bash command mentions the main repo (${cfg.repo}). Run it from the worktree instead: ${cfg.worktree}`,
           )
         }
         await enforcePathGuard(cfg, path.join(nextCwd, ".__opencode_bash_target__"), log, { tool, callID: input.callID })
@@ -990,6 +990,6 @@ export const WorktreeSandbox = async ({ directory, worktree, client }: PluginInp
 }
 
 export default {
-  id: WORKTREE_SANDBOX_PLUGIN_ID,
-  server: WorktreeSandbox,
+  id: WORKTREE_PLUGIN_ID,
+  server: WorktreePlugin,
 }
