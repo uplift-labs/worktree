@@ -143,7 +143,7 @@ function launchWindowsTerminal(worktreePath: string, branch: string): boolean {
 function opencodeCommand(worktreePath: string): string[] {
   if (process.platform !== "win32") return ["opencode", worktreePath]
   const opencode = firstCommandPath("opencode.cmd") || firstCommandPath("opencode.exe") || "opencode"
-  return ["cmd.exe", "/d", "/s", "/c", `"${quoteCmdArg(opencode)} ${quoteCmdArg(worktreePath)}"`]
+  return ["cmd.exe", "/d", "/s", "/c", `${quoteCmdArg(opencode)} ${quoteCmdArg(worktreePath)}`]
 }
 
 function commandAvailable(command: string): boolean {
