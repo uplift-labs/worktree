@@ -22,7 +22,6 @@
   "exclude": [
     ".git",
     ".opencode",
-    ".uplift",
     "node_modules",
     "dist",
     "build"

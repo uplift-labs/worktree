@@ -9,10 +9,10 @@ test("install copies TypeScript core and OpenCode plugins", () => {
   const repo = initRepo("install")
   const result = nodeScript("install.ts", ["--target", repo])
   assert.equal(result.status, 0, result.stderr || result.stdout)
-  assert.ok(fs.existsSync(path.join(repo, ".uplift", "sandbox", "core", "cmd", "sandbox-init.ts")))
-  assert.ok(fs.existsSync(path.join(repo, ".uplift", "sandbox", "core", "lib", "ttl-marker.ts")))
-  assert.ok(fs.existsSync(path.join(repo, ".uplift", "sandbox", "adapters", "opencode", "plugins", "worktree-sandbox.ts")))
-  assert.ok(fs.existsSync(path.join(repo, ".uplift", "sandbox", "adapters", "opencode", "tui", "worktree-sandbox-branch-core.ts")))
+  assert.ok(fs.existsSync(path.join(repo, ".opencode", "worktree", "core", "cmd", "sandbox-init.ts")))
+  assert.ok(fs.existsSync(path.join(repo, ".opencode", "worktree", "core", "lib", "ttl-marker.ts")))
+  assert.ok(fs.existsSync(path.join(repo, ".opencode", "worktree", "adapters", "opencode", "plugins", "worktree-sandbox.ts")))
+  assert.ok(fs.existsSync(path.join(repo, ".opencode", "worktree", "adapters", "opencode", "tui", "worktree-sandbox-branch-core.ts")))
   assert.ok(fs.existsSync(path.join(repo, ".opencode", "plugins", "worktree-sandbox.ts")))
   assert.ok(!fs.existsSync(path.join(repo, ".opencode", "plugins", "worktree-sandbox.js")))
   const tuiConfig = readJson(path.join(repo, ".opencode", "tui.json"))
@@ -36,8 +36,8 @@ test("install merges OpenCode options without Python", () => {
 
 test("OpenCode TypeScript plugin modules are importable", async () => {
   const plugin = await import(pathToFileURL(path.join(projectRoot, "adapters", "opencode", "plugins", "worktree-sandbox.ts")).href)
-  assert.equal(plugin.WORKTREE_SANDBOX_PLUGIN_ID, "uplift.worktree-sandbox")
-  assert.equal(plugin.default.id, "uplift.worktree-sandbox")
+  assert.equal(plugin.WORKTREE_SANDBOX_PLUGIN_ID, "uplift.worktree")
+  assert.equal(plugin.default.id, "uplift.worktree")
   assert.equal(typeof plugin.default.server, "function")
 
   const core = await import(pathToFileURL(path.join(projectRoot, "adapters", "opencode", "tui", "worktree-sandbox-branch-core.ts")).href)

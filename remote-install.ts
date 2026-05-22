@@ -6,13 +6,13 @@ import { spawnSync } from "node:child_process"
 import { isMainModule, needValue, safeRmTree, UsageError } from "./core/lib/exec.ts"
 
 const USAGE = [
-  "remote-install.ts - fetch worktree-sandbox and install into the current repo.",
+  "remote-install.ts - fetch worktree and install into the current repo.",
   "",
   "Usage:",
   "  node remote-install.ts [--ref <git-ref>] [--prefix <dir>] [--with-opencode-permissions] [--with-opencode-os-sandbox]",
 ].join("\n")
 
-const REPO_URL = "https://github.com/uplift-labs/worktree-sandbox.git"
+const REPO_URL = "https://github.com/uplift-labs/worktree.git"
 const DEFAULT_REF = process.env.WORKTREE_SANDBOX_REF || "v2.0.0"
 
 export function remoteInstall(argv: string[]): number {
@@ -28,10 +28,10 @@ export function remoteInstall(argv: string[]): number {
     }
   }
 
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "worktree-sandbox-"))
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "worktree-"))
   try {
-    const checkout = path.join(temp, "worktree-sandbox")
-    console.log(`[remote-install] cloning worktree-sandbox ${ref}...`)
+    const checkout = path.join(temp, "worktree")
+    console.log(`[remote-install] cloning worktree ${ref}...`)
     const clone = spawnSync("git", ["clone", "--depth", "1", "--branch", ref, "--quiet", REPO_URL, checkout], { encoding: "utf8", windowsHide: true })
     if (clone.status !== 0) {
       console.error("[remote-install] git clone failed")

@@ -79,7 +79,7 @@ const DEFAULT_FILES_REFRESH_MS = 2000
 const DEFAULT_GIT_TIMEOUT_MS = 3000
 const DEFAULT_GIT_MAX_BUFFER = 10 * 1024 * 1024
 const BUILTIN_FILES_PLUGIN_ID = "internal:sidebar-files"
-const TUI_PLUGIN_ID_PREFIX = "worktree-sandbox.branch"
+const TUI_PLUGIN_ID_PREFIX = "worktree.branch"
 const PLUGIN_ENABLED_KV = "plugin_enabled"
 
 const builtinFilesState = {
@@ -215,7 +215,7 @@ export function tuiPluginID(moduleURL = ""): string {
 export async function runWorktreeCommandAsync(moduleURL: string, input: { directory?: string; args?: string } = {}): Promise<WorktreeCommandResult> {
   const directory = input.directory || process.cwd()
   const root = await findSandboxRootAsync(moduleURL, directory)
-  if (!root) return { status: 1, stdout: "", stderr: "worktree-sandbox core not found" }
+  if (!root) return { status: 1, stdout: "", stderr: "worktree core not found" }
   const script = path.join(root, "core", "cmd", "worktree-spawn.ts")
   const args = [script, "--repo", directory, "--worktrees-dir", worktreesDirFor(root, directory), "--branch-prefix", branchPrefix(process.env), ...parseWorktreeArgs(input.args || "")]
   return execNodeAsync(args, root)
@@ -226,7 +226,7 @@ async function findSandboxRootAsync(moduleURL: string, directory: string): Promi
   const envRoot = envValue(process.env, "OPENCODE_SANDBOX_ROOT")
   if (envRoot) candidates.push(envRoot)
   const repo = resolveRepo(directory)
-  if (repo) candidates.push(path.join(repo, ".uplift", "sandbox"), repo)
+  if (repo) candidates.push(path.join(repo, ".opencode", "worktree"), repo)
   let cur = path.dirname(moduleFilePath(moduleURL) || directory)
   for (let i = 0; i < 8; i += 1) {
     candidates.push(cur)
@@ -681,7 +681,7 @@ function configuredWorktreesDirs(repo: string, env: Env): string[] {
 
   add(envValue(env, "OPENCODE_SANDBOX_WORKTREES_DIR"))
   add(envValue(env, "WORKTREE_SANDBOX_WORKTREES_DIR"))
-  add(path.join(".uplift", "sandbox", "worktrees"))
+  add(path.join(".opencode", "worktree", "worktrees"))
   add(path.join(".sandbox", "worktrees"))
   return dirs
 }
@@ -721,7 +721,7 @@ function isLikelySandboxWorktreePath(file: string | undefined, env: Env): boolea
   if (!prefix || !name.startsWith(`${prefix}-`)) return false
 
   const normalized = normalizePathForCompare(resolved).replace(/\\/g, "/")
-  return normalized.includes("/.uplift/sandbox/worktrees/") || normalized.includes("/.sandbox/worktrees/")
+  return normalized.includes("/.opencode/worktree/worktrees/") || normalized.includes("/.sandbox/worktrees/")
 }
 
 function inferCurrentSandboxWorktree(repo: string, env: Env): string {
@@ -1019,7 +1019,7 @@ export function createBranchObserver(options: BranchObserverOptions = {}) {
 
   const debug = (message: string, extra: Record<string, unknown> = {}) => {
     if (envValue(env, "AISB_OPENCODE_BRANCH_DEBUG") !== "1") return
-    console.error(`[worktree-sandbox.branch] ${message}`, extra)
+    console.error(`[worktree.branch] ${message}`, extra)
   }
 
   const reportError = (error: unknown, phase: string) => {
@@ -1190,7 +1190,7 @@ export function createChangedFilesObserver(options: ChangedFilesObserverOptions 
 
   const debug = (message: string, extra: Record<string, unknown> = {}) => {
     if (envValue(env, "AISB_OPENCODE_FILES_DEBUG") !== "1") return
-    console.error(`[worktree-sandbox.files] ${message}`, extra)
+    console.error(`[worktree.files] ${message}`, extra)
   }
 
   const reportError = (error: unknown, phase: string) => {

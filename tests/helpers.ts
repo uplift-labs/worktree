@@ -26,7 +26,7 @@ export function git(cwd: string, args: string[]): CommandResult {
 }
 
 export function tempDir(name: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `worktree-sandbox-${name}-`))
+  return fs.mkdtempSync(path.join(os.tmpdir(), `worktree-${name}-`))
 }
 
 export function initRepo(name: string): string {

@@ -4,9 +4,9 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
-export const WORKTREE_SANDBOX_PLUGIN_ID = "uplift.worktree-sandbox"
+export const WORKTREE_SANDBOX_PLUGIN_ID = "uplift.worktree"
 
-const LOG_SERVICE = "worktree-sandbox"
+const LOG_SERVICE = "worktree"
 
 type LogExtra = Record<string, unknown>
 type LogFn = (level: string, message: string, extra?: LogExtra) => Promise<void>
@@ -66,13 +66,13 @@ const SANDBOXED_TOOLS = new Set([...PATH_TOOLS, ...SEARCH_TOOLS, ...PATCH_TOOLS,
 const DEFAULT_EXEC_MAX_BUFFER = 10 * 1024 * 1024
 const DEFAULT_GIT_TIMEOUT_MS = 3000
 const PENDING_SYSTEM_CONTEXT = [
-  "worktree-sandbox is preparing a sandbox for this session.",
+  "worktree isolation is preparing a worktree for this session.",
   "Use relative project paths; supported tools will be routed to the sandbox before execution.",
   "Do not target the main repository path directly.",
 ].join(" ")
 const CHECKING_SYSTEM_CONTEXT = [
-  "worktree-sandbox is checking whether this session needs a sandbox.",
-  "Use relative project paths; supported tools will wait for sandbox readiness when sandboxing applies.",
+  "worktree isolation is checking whether this session needs a worktree.",
+  "Use relative project paths; supported tools will wait for worktree readiness when worktree isolation applies.",
   "Do not target the main repository path directly.",
 ].join(" ")
 
@@ -194,7 +194,7 @@ async function findSandboxRootAsync(repo: string): Promise<string> {
   const candidates: string[] = []
   if (envValue("OPENCODE_SANDBOX_ROOT")) candidates.push(envValue("OPENCODE_SANDBOX_ROOT"))
   if (repo) {
-    candidates.push(path.join(repo, ".uplift", "sandbox"))
+    candidates.push(path.join(repo, ".opencode", "worktree"))
   }
 
   let cur = MODULE_DIR
@@ -439,7 +439,7 @@ function deferBootstrap<T>(fn: () => T | Promise<T>): Promise<T> {
 function bootstrapDebug(session: string, phase: string, startedAt: number): void {
   if (envValue("AISB_OPENCODE_BOOT_DEBUG") !== "1") return
   const elapsed = typeof startedAt === "number" ? ` elapsed_ms=${Date.now() - startedAt}` : ""
-  console.error(`worktree-sandbox bootstrap ${phase} session=${session}${elapsed}`)
+  console.error(`worktree bootstrap ${phase} session=${session}${elapsed}`)
 }
 
 async function currentBranchAsync(repo: string): Promise<string> {
@@ -737,7 +737,7 @@ async function configForTool(sessionID, baseDirectory, log = null) {
 
   if (entry.status === "failed" && entry.enforce) {
     const warning = warningFor(entry.session) || "sandbox creation failed"
-    throw new Error(`worktree-sandbox: ${warning}`)
+    throw new Error(`worktree: ${warning}`)
   }
 
   return emptyConfig()
@@ -847,11 +847,11 @@ function injectShellEnv(cfg, output) {
 
 function sandboxToolDefinition(output) {
   const note = [
-    "worktree-sandbox is active for this project.",
+    "worktree isolation is active for this project.",
     "Use OPENCODE_SANDBOX_WORKTREE as the project root for file operations.",
     "Do not target the main repository path directly.",
   ].join(" ")
-  if (!output.description || output.description.includes("worktree-sandbox is active")) return
+  if (!output.description || output.description.includes("worktree isolation is active")) return
   output.description = `${output.description}\n\n${note}`
 }
 
@@ -904,7 +904,7 @@ export const WorktreeSandbox = async ({ directory, worktree, client }: PluginInp
       if (!output || !Array.isArray(output.system)) return
 
       if (cfg.active && cfg.worktree) {
-        output.system.push(`worktree-sandbox active. Use this root for all file operations: ${cfg.worktree}`)
+        output.system.push(`worktree isolation active. Use this root for all file operations: ${cfg.worktree}`)
         return
       }
 
@@ -918,7 +918,7 @@ export const WorktreeSandbox = async ({ directory, worktree, client }: PluginInp
         return
       }
 
-      if (warning) output.system.push(`worktree-sandbox warning: ${warning}`)
+      if (warning) output.system.push(`worktree warning: ${warning}`)
     },
 
     "tool.definition": async (input, output) => {
