@@ -68,6 +68,7 @@ function registerWorktreeCommand(api) {
       value: "worktree",
       description: "Create git worktree tab(s). Supports -n N, --print, --no-dirty.",
       category: "Worktree",
+      slash: { name: "worktree" },
       onSelect: async (input) => {
         api.ui.toast({ variant: "info", message: "Creating worktree..." })
         const result = await runWorktreeCommandAsync(MODULE_URL, {
