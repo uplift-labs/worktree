@@ -74,14 +74,16 @@ export function install(argv: string[]): number {
   console.log(`[install] adding OpenCode TUI branch plugin to ${tuiConfig}`)
   mergePluginConfig(tuiConfig, "https://opencode.ai/tui.json", "./tui-plugins/worktree-sandbox-branch.tsx")
 
+  const cfg = path.join(options.target, "opencode.json")
+  console.log(`[install] adding OpenCode TUI branch plugin to ${cfg}`)
+  mergePluginConfig(cfg, "https://opencode.ai/config.json", "./.opencode/tui-plugins/worktree-sandbox-branch.tsx")
+
   if (options.withOpenCodePermissions) {
-    const cfg = path.join(options.target, "opencode.json")
     console.log(`[install] adding conservative OpenCode permissions to ${cfg}`)
     mergeOpenCodePermissions(cfg)
   }
 
   if (options.withOpenCodeOsSandbox) {
-    const cfg = path.join(options.target, "opencode.json")
     console.log(`[install] adding opencode-sandbox plugin to ${cfg}`)
     mergePluginConfig(cfg, "https://opencode.ai/config.json", "opencode-sandbox")
   }

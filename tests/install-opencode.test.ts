@@ -17,6 +17,8 @@ test("install copies TypeScript core and OpenCode plugins", () => {
   assert.ok(!fs.existsSync(path.join(repo, ".opencode", "plugins", "worktree-sandbox.js")))
   const tuiConfig = readJson(path.join(repo, ".opencode", "tui.json"))
   assert.deepEqual(tuiConfig.plugin, ["./tui-plugins/worktree-sandbox-branch.tsx"])
+  const openCodeConfig = readJson(path.join(repo, "opencode.json"))
+  assert.deepEqual(openCodeConfig.plugin, ["./.opencode/tui-plugins/worktree-sandbox-branch.tsx"])
 })
 
 test("install merges OpenCode options without Python", () => {
@@ -26,6 +28,7 @@ test("install merges OpenCode options without Python", () => {
   assert.equal(result.status, 0, result.stderr || result.stdout)
   const cfg = readJson(path.join(repo, "opencode.json"))
   assert.ok(cfg.plugin.includes("existing-plugin"))
+  assert.ok(cfg.plugin.includes("./.opencode/tui-plugins/worktree-sandbox-branch.tsx"))
   assert.ok(cfg.plugin.includes("opencode-sandbox"))
   assert.equal(cfg.permission.external_directory, "ask")
   assert.equal(cfg.permission.doom_loop, "ask")

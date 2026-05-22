@@ -1,5 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
+    "./.opencode/tui-plugins/worktree-sandbox-branch.tsx"
   ]
 }
