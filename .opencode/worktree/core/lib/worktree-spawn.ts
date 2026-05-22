@@ -126,7 +126,7 @@ function copyUntracked(source: string, target: string): void {
 
 function launchWindowsTerminal(worktreePath: string, branch: string): boolean {
   try {
-    const child = spawn("wt.exe", ["new-tab", "--title", branch, "--startingDirectory", worktreePath, ...opencodeCommand(worktreePath)], {
+    const child = spawn("wt.exe", ["-w", "0", "new-tab", "--title", branch, "--startingDirectory", worktreePath, ...opencodeCommand(worktreePath)], {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
@@ -143,7 +143,7 @@ function launchWindowsTerminal(worktreePath: string, branch: string): boolean {
 function opencodeCommand(worktreePath: string): string[] {
   if (process.platform !== "win32") return ["opencode", worktreePath]
   const opencode = firstCommandPath("opencode.cmd") || firstCommandPath("opencode.exe") || "opencode"
-  return ["cmd.exe", "/d", "/s", "/c", `${quoteCmdArg(opencode)} ${quoteCmdArg(worktreePath)}`]
+  return ["cmd.exe", "/d", "/s", "/c", "call", opencode, worktreePath]
 }
 
 function commandAvailable(command: string): boolean {
@@ -166,10 +166,6 @@ function cleanupCreated(repo: string, created: CreatedWorktree[]): void {
 
 function quoteArg(value: string): string {
   return /[\s"]/g.test(value) ? JSON.stringify(value) : value
-}
-
-function quoteCmdArg(value: string): string {
-  return `"${String(value).replace(/"/g, "\\\"")}"`
 }
 
 function commandOutput(value: unknown): string {
