@@ -212,6 +212,14 @@ export function tuiPluginID(moduleURL = ""): string {
   return `${TUI_PLUGIN_ID_PREFIX}.${hashString(normalizePathForCompare(file))}`
 }
 
+export function nodeScriptRunner(env: Env = process.env, execPath = process.execPath): string {
+  const override = envValue(env, "OPENCODE_WORKTREE_NODE") || envValue(env, "WORKTREE_NODE")
+  if (override) return override
+  const name = path.basename(execPath || "").toLowerCase()
+  if (name === "node" || name === "node.exe" || name === "bun" || name === "bun.exe") return execPath
+  return "node"
+}
+
 export async function runWorktreeCommandAsync(moduleURL: string, input: { directory?: string; args?: string } = {}): Promise<WorktreeCommandResult> {
   const directory = input.directory || process.cwd()
   const root = await findWorktreeRootAsync(moduleURL, directory)
@@ -302,7 +310,7 @@ function shellWords(value: string): string[] {
 
 function execNodeAsync(args: string[], cwd: string): Promise<WorktreeCommandResult> {
   return new Promise((resolve) => {
-    execFile(process.execPath, args, {
+    execFile(nodeScriptRunner(), args, {
       cwd,
       encoding: "utf8",
       maxBuffer: DEFAULT_GIT_MAX_BUFFER,

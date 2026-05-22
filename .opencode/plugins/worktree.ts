@@ -275,8 +275,16 @@ function execFileAsync(command: string, args: string[], options: ExecOptions = {
   })
 }
 
+function nodeScriptRunner(env: NodeJS.ProcessEnv = process.env, execPath = process.execPath): string {
+  const override = env.OPENCODE_WORKTREE_NODE || env.WORKTREE_NODE
+  if (override) return override
+  const name = path.basename(execPath || "").toLowerCase()
+  if (name === "node" || name === "node.exe" || name === "bun" || name === "bun.exe") return execPath
+  return "node"
+}
+
 async function execWorktreeAsync(root: string, rel: string, args: string[], options: ExecOptions = {}): Promise<string> {
-  return execFileAsync(process.execPath, [path.join(root, rel), ...args], {
+  return execFileAsync(nodeScriptRunner(), [path.join(root, rel), ...args], {
     cwd: options.cwd || root,
     ...options,
   })
@@ -379,7 +387,7 @@ function cleanupConfigDetached(cfg: WorktreeConfig): void {
   if (!cfg.active || !cfg.auto) return
   killHeartbeatProcess(cfg)
   try {
-    const child = spawn(process.execPath, [path.join(cfg.root, "core/cmd/worktree-cleanup.ts"), ...cleanupArgs(cfg)], {
+    const child = spawn(nodeScriptRunner(), [path.join(cfg.root, "core/cmd/worktree-cleanup.ts"), ...cleanupArgs(cfg)], {
       cwd: cfg.root,
       detached: true,
       stdio: "ignore",
@@ -405,7 +413,7 @@ async function launchHeartbeatAsync(cfg: WorktreeConfig): Promise<void> {
 
   const pidArgs = process.platform === "win32" ? ["--pid", "0", "--parent-winpid", String(process.pid)] : ["--pid", String(process.pid)]
   const child = spawn(
-    process.execPath,
+    nodeScriptRunner(),
     [
       path.join(cfg.root, "core/lib/heartbeat.ts"),
       ...pidArgs,

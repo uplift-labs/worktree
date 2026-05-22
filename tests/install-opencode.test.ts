@@ -43,4 +43,7 @@ test("OpenCode TypeScript plugin modules are importable", async () => {
   const core = await import(pathToFileURL(path.join(projectRoot, "adapters", "opencode", "tui", "worktree-branch-core.ts")).href)
   assert.equal(typeof core.tuiPluginID, "function")
   assert.equal(typeof core.resolveWorktreeAsync, "function")
+  assert.equal(core.nodeScriptRunner({}, "C:\\tools\\opencode.exe"), "node")
+  assert.equal(core.nodeScriptRunner({ OPENCODE_WORKTREE_NODE: "C:\\node24\\node.exe" }, "C:\\tools\\opencode.exe"), "C:\\node24\\node.exe")
+  assert.equal(core.nodeScriptRunner({}, "C:\\node24\\node.exe"), "C:\\node24\\node.exe")
 })
