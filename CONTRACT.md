@@ -12,7 +12,7 @@ Every TypeScript file under `core/cmd/` is a stable public entry point. Files un
 - **Fail-open policy:** when git context cannot be resolved, commands exit `0` silently. They are safety nets, not gatekeepers.
 - **Marker storage:** `<git-common-dir>/worktree-markers/<safe-session-id>`. The safe session id is the caller-provided session id with any character outside `[A-Za-z0-9-]` replaced by `-`, preventing path traversal while preserving deterministic lookup. Marker fields are `branch epoch initial_head`. Markers are auto-expired via TTL.
 - **Heartbeat sidecar:** `<marker-path>.hb`. Format: `<heartbeat_pid> <parent_winpid|0> <monitored_pid|0>`. Field 1 is the heartbeat PID. Field 2 is the native Windows PID of the owning process when known. Field 3 is the Unix PID monitored via `process.kill(pid, 0)` when known. The heartbeat touches the marker while the owning process is alive; when the owner dies, it invokes `worktree-cleanup.ts` for immediate session cleanup.
-- **Worktree location:** source CLI default is `<repo-root>/.worktree/worktrees/<branch-name>`. Installed OpenCode integration passes `<repo-root>/.opencode/worktree/worktrees/<branch-name>` explicitly.
+- **Worktree location:** source CLI default and installed OpenCode integration use `<repo-root>/.opencode/worktree/worktrees/<branch-name>`.
 
 ## Commands
 
@@ -29,7 +29,7 @@ node core/cmd/worktree-init.ts --repo <dir> --session <id> [--base <branch>] [--
 | `--repo` | yes | Absolute path to the main repo. Must be on `main` or `master`. |
 | `--session` | yes | Unique session identifier. Used for branch and marker names. |
 | `--base` | no | Base branch to fork from. Defaults to detected main branch. |
-| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.worktree/worktrees`. |
+| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.opencode/worktree/worktrees`. |
 | `--branch-prefix` | no | Branch name prefix. Default: `wt`. |
 
 Output: absolute worktree path on stdout on success.
@@ -61,7 +61,7 @@ node core/cmd/worktree-lifecycle.ts --repo <dir> [--ttl <seconds>] [--branch-pre
 | `--repo` | yes | Main repo path. |
 | `--ttl` | no | Marker TTL in seconds for stale reclaim. Default: `5`. |
 | `--branch-prefix` | no | Glob for orphan branch sweep. Default: `wt-*`. |
-| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.worktree/worktrees`. |
+| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.opencode/worktree/worktrees`. |
 
 Phases: reflection rescue, git worktree metadata prune, TTL marker reclaim with heartbeat owner checks, proactive marker release for merged clean worktrees, merged worktree cleanup, orphan branch sweep, residual dir sweep.
 
@@ -87,7 +87,7 @@ node core/cmd/worktree-cleanup.ts --repo <dir> --session <id> [--trust-dead] [--
 | `--repo` | yes | Main repo path. |
 | `--session` | yes | Session identifier. |
 | `--trust-dead` | no | Treat the owning session as definitely ended. Intended for OpenCode session deletion and process-exit cleanup paths. |
-| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.worktree/worktrees`. |
+| `--worktrees-dir` | no | Worktree directory relative to repo root. Default: `.opencode/worktree/worktrees`. |
 | `--branch-prefix` | no | Glob for orphan branch sweep. Default: `wt-*`. |
 
 Phases: capture-commit pending work unless merge/rebase/detached HEAD state is in progress, self-release marker if branch is merged into main and worktree is clean, refresh surviving marker, invoke `worktree-lifecycle`.

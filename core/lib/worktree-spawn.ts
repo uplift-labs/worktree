@@ -28,7 +28,7 @@ export type WorktreeSpawnResult = {
 
 type CreatedWorktree = { path: string; branch: string }
 
-const DEFAULT_WORKTREES_DIR = ".worktree/worktrees"
+const DEFAULT_WORKTREES_DIR = ".opencode/worktree/worktrees"
 const DEFAULT_BRANCH_PREFIX = "wt"
 
 export function spawnWorktrees(options: WorktreeSpawnOptions): WorktreeSpawnResult {

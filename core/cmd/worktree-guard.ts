@@ -15,7 +15,7 @@ export function worktreeGuard(argv: string[]): number {
   let session = ""
   let file = ""
   let repo = ""
-  let worktreesDir = ".worktree/worktrees"
+  let worktreesDir = ".opencode/worktree/worktrees"
 
   for (let i = 0; i < argv.length;) {
     const arg = argv[i]

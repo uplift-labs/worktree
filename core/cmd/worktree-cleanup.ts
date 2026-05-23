@@ -16,7 +16,7 @@ export function worktreeCleanup(argv: string[]): number {
   let repo = ""
   let session = ""
   let trustDead = false
-  let worktreesDir = ".worktree/worktrees"
+  let worktreesDir = ".opencode/worktree/worktrees"
   let branchPrefix = "wt-*"
 
   for (let i = 0; i < argv.length;) {

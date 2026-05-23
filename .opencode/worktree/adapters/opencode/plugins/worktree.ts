@@ -179,7 +179,7 @@ function emptyConfig(): WorktreeConfig {
     repo: "",
     root: "",
     worktree: "",
-    worktreesDir: ".worktree/worktrees",
+    worktreesDir: ".opencode/worktree/worktrees",
     branchPrefix: "wt",
     branchGlob: "wt-*",
     auto: false,
@@ -239,7 +239,7 @@ function worktreesDir(repo: string, root: string): string {
   if (repo && root && isWithin(root, repo) && normalize(root) !== normalize(repo)) {
     return `${toPosix(path.relative(repo, root))}/worktrees`
   }
-  return ".worktree/worktrees"
+  return ".opencode/worktree/worktrees"
 }
 
 function branchPrefix(): string {

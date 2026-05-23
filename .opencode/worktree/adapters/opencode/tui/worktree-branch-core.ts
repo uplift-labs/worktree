@@ -253,7 +253,7 @@ function worktreesDirFor(root: string, directory: string): string {
   if (envDir) return envDir
   const repo = resolveRepo(directory)
   if (repo && isWithinPath(root, repo) && normalizePathForCompare(root) !== normalizePathForCompare(repo)) return `${toPosix(path.relative(repo, root))}/worktrees`
-  return ".worktree/worktrees"
+  return ".opencode/worktree/worktrees"
 }
 
 function branchPrefix(env: Env = process.env): string {
@@ -690,7 +690,6 @@ function configuredWorktreesDirs(repo: string, env: Env): string[] {
   add(envValue(env, "OPENCODE_WORKTREES_DIR"))
   add(envValue(env, "WORKTREE_WORKTREES_DIR"))
   add(path.join(".opencode", "worktree", "worktrees"))
-  add(path.join(".worktree", "worktrees"))
   return dirs
 }
 
@@ -729,7 +728,7 @@ function isLikelyWorktreePath(file: string | undefined, env: Env): boolean {
   if (!prefix || !name.startsWith(`${prefix}-`)) return false
 
   const normalized = normalizePathForCompare(resolved).replace(/\\/g, "/")
-  return normalized.includes("/.opencode/worktree/worktrees/") || normalized.includes("/.worktree/worktrees/")
+  return normalized.includes("/.opencode/worktree/worktrees/")
 }
 
 function inferCurrentWorktree(repo: string, env: Env): string {

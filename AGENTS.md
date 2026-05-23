@@ -30,7 +30,7 @@ OpenCode-focused repository instructions for `worktree`. `CONTRACT.md` is the pu
 - Core exit codes are fixed: `0` allow/success, `1` deny/failure with reason on stdout, `2` bad usage. Preserve the fail-open policy when git context cannot be resolved.
 - Changing any `core/cmd/` flag, output, exit code, marker format, or lifecycle phase requires updating `CONTRACT.md` and tests in the same change.
 - Markers live at `<git-common-dir>/worktree-markers/<session-id>` with fields `branch epoch initial_head`; `core/lib/ttl-marker.ts` owns marker reads/writes.
-- Source CLI default worktrees dir is `.worktree/worktrees`; installed OpenCode integration passes `.opencode/worktree/worktrees` explicitly.
+- Source CLI default worktrees dir is `.opencode/worktree/worktrees`; installed OpenCode integration also uses `.opencode/worktree/worktrees`.
 
 ## Lifecycle And Hooks
 

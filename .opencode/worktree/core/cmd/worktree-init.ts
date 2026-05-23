@@ -12,7 +12,7 @@ export function worktreeInit(argv: string[]): number {
   let repo = ""
   let session = ""
   let base = ""
-  let worktreesDir = ".worktree/worktrees"
+  let worktreesDir = ".opencode/worktree/worktrees"
   let branchPrefix = "wt"
 
   for (let i = 0; i < argv.length;) {

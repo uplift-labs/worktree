@@ -31,17 +31,17 @@ test("scanUncommitted counts tracked and untracked files", () => {
 
 test("worktree init, guard, and merge gate run through TypeScript CLIs", () => {
   const repo = initRepo("core")
-  const init = nodeScript("core/cmd/worktree-init.ts", ["--repo", repo, "--session", "oc-core", "--worktrees-dir", ".worktree/worktrees"])
+  const init = nodeScript("core/cmd/worktree-init.ts", ["--repo", repo, "--session", "oc-core", "--worktrees-dir", ".opencode/worktree/worktrees"])
   assert.equal(init.status, 0, init.stderr || init.stdout)
   const worktree = init.stdout.trim()
   assert.ok(fs.existsSync(worktree), worktree)
   assert.ok(fs.existsSync(path.join(repo, ".git", "worktree-markers", "oc-core")))
 
-  const blocked = nodeScript("core/cmd/worktree-guard.ts", ["--repo", repo, "--session", "oc-core", "--file", path.join(repo, "README.md"), "--worktrees-dir", ".worktree/worktrees"])
+  const blocked = nodeScript("core/cmd/worktree-guard.ts", ["--repo", repo, "--session", "oc-core", "--file", path.join(repo, "README.md"), "--worktrees-dir", ".opencode/worktree/worktrees"])
   assert.equal(blocked.status, 1)
   assert.match(blocked.stdout, /worktree-guard: edit blocked/)
 
-  const allowed = nodeScript("core/cmd/worktree-guard.ts", ["--repo", repo, "--session", "oc-core", "--file", path.join(worktree, "README.md"), "--worktrees-dir", ".worktree/worktrees"])
+  const allowed = nodeScript("core/cmd/worktree-guard.ts", ["--repo", repo, "--session", "oc-core", "--file", path.join(worktree, "README.md"), "--worktrees-dir", ".opencode/worktree/worktrees"])
   assert.equal(allowed.status, 0)
 
   fs.writeFileSync(path.join(worktree, "dirty.txt"), "dirty\n", "utf8")
@@ -88,7 +88,7 @@ test("worktree spawn copies staged, unstaged, and untracked non-ignored state", 
 test("reflection rescue copies markdown sidecar files", () => {
   const repo = initRepo("rescue")
   const branch = "wt-oc-rescue"
-  const worktree = path.join(repo, ".worktree", "worktrees", branch)
+  const worktree = path.join(repo, ".opencode", "worktree", "worktrees", branch)
   fs.mkdirSync(path.join(worktree, ".reinforce", "reflections"), { recursive: true })
   fs.writeFileSync(path.join(worktree, ".reinforce", "reflections", "note.md"), "note\n", "utf8")
   const result = nodeScript("core/cmd/reflection-rescue.ts", ["--repo", repo])

@@ -15,7 +15,7 @@ export async function heartbeat(argv: string[]): Promise<number> {
   let parentWinPid = ""
   let repo = ""
   let worktreeRoot = ""
-  let worktreesDir = ".worktree/worktrees"
+  let worktreesDir = ".opencode/worktree/worktrees"
   let branchPrefix = "wt-*"
   let ownerProcessNames = "opencode,opencode.exe,node,node.exe,bun,bun.exe"
 

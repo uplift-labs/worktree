@@ -19,7 +19,7 @@ export function worktreeLifecycle(argv: string[], options: { quiet?: boolean } =
   let repo = ""
   let ttl = 5
   let branchPrefix = "wt-*"
-  let worktreesDir = ".worktree/worktrees"
+  let worktreesDir = ".opencode/worktree/worktrees"
 
   for (let i = 0; i < argv.length;) {
     const arg = argv[i]
