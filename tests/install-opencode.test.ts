@@ -17,6 +17,10 @@ test("install copies TypeScript core and OpenCode plugins", () => {
   assert.ok(!fs.existsSync(path.join(repo, ".opencode", "plugins", "worktree.js")))
   const tuiConfig = readJson(path.join(repo, ".opencode", "tui.json"))
   assert.deepEqual(tuiConfig.plugin, ["./tui-plugins/worktree-branch.tsx"])
+  assertMirrorDir(path.join(projectRoot, "core"), path.join(repo, ".opencode", "worktree", "core"), [".ts"])
+  assertMirrorDir(path.join(projectRoot, "adapters", "opencode"), path.join(repo, ".opencode", "worktree", "adapters", "opencode"), [".ts", ".tsx"])
+  assertMirrorDir(path.join(projectRoot, "adapters", "opencode", "plugins"), path.join(repo, ".opencode", "plugins"), [".ts"])
+  assertMirrorDir(path.join(projectRoot, "adapters", "opencode", "tui"), path.join(repo, ".opencode", "tui-plugins"), [".ts", ".tsx"])
 })
 
 test("install merges OpenCode options without Python", () => {
@@ -47,3 +51,31 @@ test("OpenCode TypeScript plugin modules are importable", async () => {
   assert.equal(core.nodeScriptRunner({ OPENCODE_WORKTREE_NODE: "C:\\node24\\node.exe" }, "C:\\tools\\opencode.exe"), "C:\\node24\\node.exe")
   assert.equal(core.nodeScriptRunner({}, "C:\\node24\\node.exe"), "C:\\node24\\node.exe")
 })
+
+function assertMirrorDir(source: string, mirror: string, extensions: string[]): void {
+  const sourceFiles = relativeFiles(source, extensions)
+  const mirrorFiles = relativeFiles(mirror, extensions)
+  assert.deepEqual(mirrorFiles, sourceFiles, `mirror file list mismatch for ${mirror}`)
+  for (const relative of sourceFiles) {
+    assert.equal(
+      fs.readFileSync(path.join(mirror, relative), "utf8"),
+      fs.readFileSync(path.join(source, relative), "utf8"),
+      `mirror content mismatch for ${relative}`,
+    )
+  }
+}
+
+function relativeFiles(root: string, extensions: string[]): string[] {
+  const files: string[] = []
+  walk(root, "")
+  return files.sort()
+
+  function walk(directory: string, prefix: string): void {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const relative = prefix ? path.join(prefix, entry.name) : entry.name
+      const full = path.join(directory, entry.name)
+      if (entry.isDirectory()) walk(full, relative)
+      else if (entry.isFile() && extensions.includes(path.extname(entry.name))) files.push(relative)
+    }
+  }
+}

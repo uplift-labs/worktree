@@ -48,3 +48,4 @@ OpenCode-focused repository instructions for `worktree`. `CONTRACT.md` is the pu
 ## Finish Loop
 
 - After making repository changes, dogfood before reporting completion: run the relevant test/install/verification cycle for the touched area, and state the exact commands and results.
+- For non-trivial diffs, run `@worktree-reviewer` before reporting completion or landing changes. This does not replace `npm run verify`.
