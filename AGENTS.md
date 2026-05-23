@@ -2,6 +2,13 @@
 
 OpenCode-focused repository instructions for `worktree`. `CONTRACT.md` is the public CLI source of truth.
 
+## OpenSpec Development Flow
+
+- All project development changes MUST go through the OpenSpec flow. This includes feature work, bug fixes, behavior changes, refactors, tests, docs that describe behavior, tooling changes, and repository instruction changes.
+- When the user asks for a project change, proactively enforce OpenSpec instead of making direct edits: use `openspec-explore` for unclear requirements, `openspec-propose` to create or update proposal artifacts before implementation, `openspec-apply-change` to implement approved tasks, and `openspec-archive-change` after completion.
+- Do not bypass OpenSpec because a requested change looks small. Only skip the flow for purely informational requests, read-only investigation or review, or when a higher-priority instruction explicitly requires a different path; state the reason before proceeding outside the OpenSpec flow.
+- If the user asks for implementation without an existing OpenSpec change, pause direct edits and drive the proposal/task flow first. Do not proceed outside OpenSpec unless a higher-priority instruction explicitly requires a different path, and state that reason before proceeding.
+
 ## Worktree Discipline
 
 - During OpenCode sessions, `OPENCODE_WORKTREE_PATH` is the active project root; do file reads and edits there, not in the main checkout.
